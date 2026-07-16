@@ -730,9 +730,104 @@ async def qbit_cache_refresher():
         await asyncio.sleep(QBIT_REFRESH_SECONDS)
 
 
+# titles of releases we notified about, so the add-button flow can name them
+NOTIFIED_TITLES: dict[int, str] = {}
+
+
+def collect_new_episodes() -> list[dict]:
+    """Check every favorite on HeBits for episodes newer than its watermark.
+
+    Returns [{text, keyboard}] messages to send; updates each favorite's
+    "last_ep" watermark so an episode is only announced once. On the first
+    check of a favorite, just records the current newest episode silently.
+    """
+    favorites = load_favorites()
+    notifications = []
+    changed = False
+    for gid, entry in favorites.items():
+        try:
+            groups, _ = hebits_search(entry["query"])
+        except (HebitsError, requests.RequestException) as e:
+            log.warning("favorites check failed for %s: %s", entry["name"], e)
+            continue
+        group = next((g for g in groups if str(g.get("gid")) == gid), None)
+        if group is None:
+            continue
+        keyed = [
+            (episode_key(t["title"]), t)
+            for t in group["torrents"]
+            if episode_key(t["title"])
+        ]
+        if not keyed:
+            continue
+        current_max = max(k for k, _ in keyed)
+        stored = entry.get("last_ep")
+        if stored is None:
+            entry["last_ep"] = list(current_max)
+            changed = True
+            continue
+        new = sorted(
+            ((k, t) for k, t in keyed if k > tuple(stored)),
+            key=lambda kt: (kt[0], kt[1]["seeders"] or 0),
+            reverse=True,
+        )
+        if not new:
+            continue
+        entry["last_ep"] = list(current_max)
+        changed = True
+
+        episodes = sorted({episode_tag(t["title"]) for _, t in new}, reverse=True)
+        plural = "s" if len(episodes) > 1 else ""
+        lines = [
+            f"🆕 <b>{html.escape(entry['name'])}</b> — new episode{plural}: "
+            f"{', '.join(episodes)}",
+            "",
+            "Pick a version to add to qBittorrent:",
+        ]
+        rows = []
+        for k, t in new[:12]:
+            NOTIFIED_TITLES[t["id"]] = t["title"]
+            tech = " ".join(x for x in (t["resolution"], t["codec"]) if x) or "?"
+            marks = ("🆓" if t["free"] else "")
+            label = (
+                f"⬇️ {episode_tag(t['title'])} · {tech} · "
+                f"{fmt_size(t['size'])} · 🌱{t['seeders']} {marks}"
+            )
+            rows.append([InlineKeyboardButton(label[:60], callback_data=f"nf:{t['id']}")])
+        rows.append([InlineKeyboardButton("✖️ Dismiss", callback_data="sx")])
+        notifications.append({"text": "\n".join(lines), "kb": InlineKeyboardMarkup(rows)})
+    if changed:
+        save_favorites(favorites)
+    return notifications
+
+
+async def favorites_episode_checker(app: "Application"):
+    """Background task: every few hours, announce new episodes of favorites."""
+    while True:
+        try:
+            notifications = await asyncio.to_thread(collect_new_episodes)
+            for note in notifications:
+                for uid in ALLOWED_USER_IDS:
+                    await app.bot.send_message(
+                        uid, note["text"], reply_markup=note["kb"], parse_mode=ParseMode.HTML
+                    )
+            if notifications:
+                log.info("sent %d new-episode notification(s)", len(notifications))
+        except Exception as e:
+            log.warning("favorites episode check failed: %s", e)
+        await asyncio.sleep(QBIT_REFRESH_SECONDS)
+
+
 def normalize_name(name: str) -> str:
-    """Normalize a release name for matching (dots/spaces/case don't matter)."""
-    return re.sub(r"[\W_]+", "", name.lower())
+    """Normalize a release name for matching (dots/spaces/case don't matter).
+
+    HeBits rewrites the internal torrent name of its releases — inserting a
+    "HeBits" token and reshuffling separators (e.g. "…H.264-NTb" becomes
+    "…H.264.HeBits-NTb") — so that token is stripped too, as are video file
+    extensions that qBittorrent shows for single-file torrents.
+    """
+    name = re.sub(r"\.(mkv|mp4|avi|m2ts|ts|wmv)$", "", name, flags=re.IGNORECASE)
+    return re.sub(r"[\W_]+", "", name.lower()).replace("hebits", "")
 
 
 def decorate_local_status(groups: list[dict]) -> None:
@@ -1398,18 +1493,27 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not entry:
                 await query.answer("Not in favorites anymore.", show_alert=True)
                 return
-            await query.answer(f"Loading {entry['name']}…")
-            groups, _ = hebits_search(entry["query"])
-            group = next((g for g in groups if str(g.get("gid")) == arg), None)
-            if group is None:
-                await query.message.reply_text(
-                    f"Couldn't find “{entry['name']}” on HeBits anymore."
-                )
+            await query.answer()
+            loading = await query.message.reply_text(
+                f"⏳ Loading <b>{html.escape(entry['name'])}</b> from HeBits…",
+                parse_mode=ParseMode.HTML,
+            )
+            try:
+                groups, _ = hebits_search(entry["query"])
+                group = next((g for g in groups if str(g.get("gid")) == arg), None)
+                if group is None:
+                    await loading.edit_text(
+                        f"Couldn't find “{entry['name']}” on HeBits anymore."
+                    )
+                    return
+                decorate_local_status([group])
+                context.user_data["search"] = [group]
+                context.user_data["search_view"] = (entry["query"], "a", 1)
+                await send_detail_card(query.message, group, 0)
+            except (HebitsError, requests.RequestException) as e:
+                await loading.edit_text(f"❌ Loading failed: {e}")
                 return
-            decorate_local_status([group])
-            context.user_data["search"] = [group]
-            context.user_data["search_view"] = (entry["query"], "a", 1)
-            await send_detail_card(query.message, group, 0)
+            await loading.delete()
 
         elif sub == "d":  # remove from the favorites list view
             if arg in favorites:
@@ -1419,6 +1523,22 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.answer()
             await render(*favorites_overview())
+
+    elif action == "nf":  # add a release from a new-episode notification
+        tid = int(rest)
+        await query.answer("Fetching .torrent…")
+        data_bytes = hebits_download(tid)
+        name = NOTIFIED_TITLES.get(tid, f"HeBits torrent #{tid}")
+        context.user_data["pending_add"] = {
+            "file": data_bytes,
+            "name": name,
+            "hebits_id": tid,
+        }
+        await query.message.reply_text(
+            f"📄 <b>{html.escape(name)}</b>\nTag it?",
+            reply_markup=build_add_tag_keyboard(context),
+            parse_mode=ParseMode.HTML,
+        )
 
     elif action == "sx":  # close a search detail message
         await query.answer()
@@ -1502,6 +1622,7 @@ def main():
 
     async def start_background_jobs(app_: Application):
         app_.create_task(qbit_cache_refresher())
+        app_.create_task(favorites_episode_checker(app_))
 
     app = Application.builder().token(BOT_TOKEN).post_init(start_background_jobs).build()
     app.add_handler(CommandHandler("start", cmd_start))

@@ -87,6 +87,12 @@ either method.
   detail card (⭐ Add to favorites); opening a favorite re-fetches it fresh so
   you land on the newest season with live download markers. Remove with 💔 on
   the card or 🗑 in the list. Stored in `favorites.json`
+- **New-episode alerts** — every 3 hours the bot checks each favorite on HeBits;
+  when a new episode or season pack appears it messages you with one button per
+  available version (episode · resolution · size · seeders) — tap one and it
+  goes into the usual tag → category add flow. Each episode is announced once
+  (a per-favorite watermark in `favorites.json` tracks the newest seen episode;
+  the first check after starring just records the current state silently)
 - **Download indicators** — search results are checked against qBittorrent's
   live torrent list: ⏬ 43% downloading, ✅ completed, 📥 added via the bot
   before but no longer in qBittorrent. Bot-added torrents match exactly by
