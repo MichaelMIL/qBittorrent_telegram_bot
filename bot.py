@@ -618,15 +618,34 @@ def build_add_cat_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboard
 @restricted
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 <b>qBittorrent bot</b>\n\n"
-        "• /list — browse &amp; manage torrents\n"
-        "• /tags — browse by tag\n"
-        "• /categories — browse by category\n"
-        "• /search &lt;name&gt; — search HeBits (or just type the name)\n"
-        "• /favorites (or /fav) — your starred series, one tap away\n"
-        "• /cookie — check or update the HeBits session cookie\n"
-        "• Send a <b>magnet link</b> or a <b>.torrent file</b> to add a torrent\n"
-        "• /cancel — cancel a pending action",
+        "🫡 <b>At your service!</b> I'm your personal torrent butler — I talk to "
+        "qBittorrent and to your HeBits account so you never have to leave this chat.\n"
+        "\n"
+        "🔎 <b>Finding things</b>\n"
+        "Just type a name (try <i>fauda</i>) and I'll search HeBits — filter "
+        "🎬 movies / 📺 series, flip through seasons, and see every release with "
+        "its resolution, size and seeders. Magnet links and .torrent files work too.\n"
+        "\n"
+        "⬇️ <b>Adding things</b>\n"
+        "Every add walks through a tiny flow: pick a 🏷 <b>tag</b>, then a 📁 "
+        "<b>category</b>. That's how your library stays tidy — and how you find "
+        "things again with /tags and /categories.\n"
+        "\n"
+        "📚 <b>Managing things</b>\n"
+        "/list shows everything in qBittorrent — tap a torrent to pause, resume, "
+        "re-tag, or delete it (with or without its files).\n"
+        "\n"
+        "⭐ <b>Favorites</b> (the good part)\n"
+        "Star a series from its card, then /fav opens it in two taps. Every 3 "
+        "hours I quietly check your favorites — when a new episode drops, I ping "
+        "you with the available versions so you just tap the one you want. 🍿\n"
+        "\n"
+        "🧭 <b>Marker cheat-sheet</b>\n"
+        "🆓 freeleech · ✔️ snatched on HeBits · ✅ downloaded · ⏬ downloading · "
+        "📥 added before, gone now\n"
+        "\n"
+        "🍪 /cookie — check or renew my HeBits session\n"
+        "🛟 /cancel — bail out of any flow, no questions asked",
         parse_mode=ParseMode.HTML,
     )
 
@@ -973,10 +992,14 @@ async def send_detail_card(message, res: dict, gi: int) -> None:
 
 def favorites_overview() -> tuple[str, InlineKeyboardMarkup]:
     favorites = load_favorites()
+    footer = [
+        InlineKeyboardButton("🔄 Refresh", callback_data="fv:r"),
+        InlineKeyboardButton("🆕 Check episodes", callback_data="fv:c"),
+    ]
     if not favorites:
         return (
             "No favorites yet. Open a series from a search and tap ⭐ Add to favorites.",
-            InlineKeyboardMarkup([]),
+            InlineKeyboardMarkup([footer]),
         )
     rows = []
     for gid, entry in sorted(favorites.items(), key=lambda kv: kv[1]["name"].lower()):
@@ -987,6 +1010,7 @@ def favorites_overview() -> tuple[str, InlineKeyboardMarkup]:
                 InlineKeyboardButton("🗑", callback_data=f"fv:d:{gid}"),
             ]
         )
+    rows.append(footer)
     return "⭐ <b>Favorites</b> — tap to open:", InlineKeyboardMarkup(rows)
 
 
@@ -1514,6 +1538,27 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await loading.edit_text(f"❌ Loading failed: {e}")
                 return
             await loading.delete()
+
+        elif sub == "r":  # refresh the favorites list view
+            await query.answer()
+            await render(*favorites_overview())
+
+        elif sub == "c":  # check all favorites for new episodes right now
+            await query.answer("Checking favorites…")
+            loading = await query.message.reply_text("⏳ Checking favorites for new episodes…")
+            try:
+                notifications = await asyncio.to_thread(collect_new_episodes)
+            except Exception as e:
+                await loading.edit_text(f"❌ Check failed: {e}")
+                return
+            if not notifications:
+                await loading.edit_text("✅ No new episodes for your favorites.")
+                return
+            await loading.delete()
+            for note in notifications:
+                await query.message.reply_text(
+                    note["text"], reply_markup=note["kb"], parse_mode=ParseMode.HTML
+                )
 
         elif sub == "d":  # remove from the favorites list view
             if arg in favorites:
