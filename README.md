@@ -4,6 +4,28 @@ Manage the qBittorrent instance on your Mac from Telegram: browse torrents by ta
 add via magnet link or `.torrent` file, toggle tags, pause/resume, and remove
 torrents (optionally together with their downloaded files).
 
+## Project layout
+
+```
+bot.py                 entry point (python bot.py)
+hebits_cookie.py       standalone cookie-capture helper
+qbit_bot/
+  config.py            env, paths, constants
+  utils.py             formatting, episode parsing, info-hash
+  storage.py           JSON stores: history, favorites, settings, snapshot
+  qbit.py              qBittorrent client + live status decoration
+  hebits.py            HeBits API: search, download, covers, cookie
+  views.py             message texts and keyboards
+  jobs.py              background loops (snapshot refresh, episode alerts)
+  handlers.py          commands, callbacks, add flows
+  main.py              application wiring
+data/                  runtime state (git-ignored): history.json,
+                       favorites.json, qbit_cache.json, bot_settings.json
+```
+
+Existing data files are migrated from the project root into `data/`
+automatically on first start.
+
 ## 1. Enable the qBittorrent Web UI (on the Mac)
 
 1. Open qBittorrent → **Preferences** (⌘,) → **Web UI**

@@ -2,7 +2,4 @@
 .venv/
 __pycache__/
 *.pyc
-history.json
-qbit_cache.json
-favorites.json
-bot_settings.json
+data/
