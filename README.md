@@ -70,6 +70,11 @@ either method.
 
 ## Usage
 
+A **persistent button bar** sits under the text box (appears after /start):
+📚 List · ⭐ Favorites · 🆕 Check · 🏷 Tags · 📁 Categories · ⚙️ Settings —
+each tap runs the matching command, so day-to-day use needs no typing at all
+(typing is only for searching and naming new tags/categories).
+
 - **/list** — browse all torrents; tap one to see progress, pause/resume, tag, or delete it
 - **/tags** — pick a tag to see only torrents with that tag
 - **/categories** — pick a qBittorrent category to filter by

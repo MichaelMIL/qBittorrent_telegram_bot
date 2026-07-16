@@ -15,7 +15,12 @@ from urllib.parse import urlparse
 import qbittorrentapi
 import requests
 from dotenv import load_dotenv
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    Update,
+)
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from telegram.ext import (
@@ -648,6 +653,18 @@ def build_add_cat_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboard
     return InlineKeyboardMarkup(rows)
 
 
+# persistent reply keyboard shown under the text box — taps are handled in
+# on_text and routed to the matching command
+MAIN_KEYBOARD = ReplyKeyboardMarkup(
+    [
+        ["📚 List", "⭐ Favorites", "🆕 Check"],
+        ["🏷 Tags", "📁 Categories", "⚙️ Settings"],
+    ],
+    resize_keyboard=True,
+    is_persistent=True,
+)
+
+
 # ------------------------------------------------------------------ commands
 
 @restricted
@@ -683,8 +700,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "list, check favorites for episodes, tune the auto-check intervals.\n"
         "\n"
         "📖 /help — command cheat-sheet\n"
-        "🛟 /cancel — bail out of any flow, no questions asked",
+        "🛟 /cancel — bail out of any flow, no questions asked\n"
+        "\n"
+        "👇 The buttons below are always there — no typing needed.",
         parse_mode=ParseMode.HTML,
+        reply_markup=MAIN_KEYBOARD,
     )
 
 
@@ -716,6 +736,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/start — the full tour\n"
         "/help — this list",
         parse_mode=ParseMode.HTML,
+        reply_markup=MAIN_KEYBOARD,
     )
 
 
@@ -1418,6 +1439,18 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except qbittorrentapi.exceptions.Conflict409Error:
                 pass  # category already exists — just use it
             await do_add(update, context, context.user_data.pop("add_tag", None), cat)
+        return
+
+    button_actions = {
+        "📚 List": cmd_list,
+        "⭐ Favorites": cmd_favorites,
+        "🆕 Check": cmd_check,
+        "🏷 Tags": cmd_tags,
+        "📁 Categories": cmd_categories,
+        "⚙️ Settings": cmd_settings,
+    }
+    if text in button_actions:
+        await button_actions[text](update, context)
         return
 
     if text.startswith("magnet:"):
