@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Telegram bot for managing qBittorrent torrents (with tags) over the Web UI API."""
 
+import asyncio
 import hashlib
 import html
 import json
@@ -47,6 +48,9 @@ PAGE_SIZE = 8
 SEARCH_RESULTS = 10
 
 HISTORY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.json")
+QBIT_CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qbit_cache.json")
+QBIT_REFRESH_SECONDS = 3 * 3600
+FAVORITES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "favorites.json")
 
 logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s %(message)s", level=logging.INFO
@@ -171,6 +175,20 @@ def load_history() -> dict:
             return json.load(f)
     except (OSError, ValueError):
         return {}
+
+
+def load_favorites() -> dict:
+    """HeBits group id (str) -> {name, query, added}."""
+    try:
+        with open(FAVORITES_PATH) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_favorites(favorites: dict) -> None:
+    with open(FAVORITES_PATH, "w") as f:
+        json.dump(favorites, f, ensure_ascii=False, indent=1)
 
 
 def record_history(hebits_id, info_hash: str, name: str) -> None:
@@ -342,6 +360,7 @@ def hebits_search(query: str, cat: str = "a", page: int = 1) -> tuple[list[dict]
             torrents.sort(key=lambda t: t["seeders"] or 0, reverse=True)
         groups.append(
             {
+                "gid": group.get("groupId"),
                 "name_en": group.get("groupNameAlt") or "",
                 "name_he": group.get("groupName") or "",
                 "year": group.get("groupYear") or "",
@@ -604,6 +623,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /tags — browse by tag\n"
         "• /categories — browse by category\n"
         "• /search &lt;name&gt; — search HeBits (or just type the name)\n"
+        "• /favorites (or /fav) — your starred series, one tap away\n"
         "• /cookie — check or update the HeBits session cookie\n"
         "• Send a <b>magnet link</b> or a <b>.torrent file</b> to add a torrent\n"
         "• /cancel — cancel a pending action",
@@ -664,37 +684,92 @@ async def cmd_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
 SEARCH_FILTERS = [("a", "🌐 All"), ("1", "🎬 Movies"), ("2", "📺 Series")]
 
 
-def decorate_local_status(groups: list[dict]) -> None:
-    """Mark releases the bot has added before with their live qBittorrent state.
+class CachedTorrent:
+    """Snapshot of a qBittorrent torrent, interchangeable with the live object."""
 
-    Sets t["local"] to ("done",) | ("dl", progress) | ("gone",) | ("hist",)
-    — "hist" when qBittorrent is unreachable and we only know it was added.
+    def __init__(self, hash: str, name: str, progress: float):
+        self.hash, self.name, self.progress = hash, name, progress
+
+
+def save_qbit_cache(torrents) -> None:
+    data = {
+        "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "torrents": [
+            {"hash": t.hash, "name": t.name, "progress": t.progress} for t in torrents
+        ],
+    }
+    with open(QBIT_CACHE_PATH, "w") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+
+def load_qbit_cache() -> list[CachedTorrent] | None:
+    try:
+        with open(QBIT_CACHE_PATH) as f:
+            data = json.load(f)
+        return [CachedTorrent(**t) for t in data["torrents"]]
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def fetch_qbit_torrents():
+    """Live torrent list from qBittorrent; refreshes the on-disk snapshot too."""
+    torrents = qb().torrents_info()
+    save_qbit_cache(torrents)
+    return torrents
+
+
+async def qbit_cache_refresher():
+    """Background task: refresh the qBittorrent snapshot every few hours so
+    search markers stay useful even when the client is briefly unreachable."""
+    while True:
+        try:
+            torrents = await asyncio.to_thread(fetch_qbit_torrents)
+            log.info("qBittorrent cache refreshed: %d torrents", len(torrents))
+        except Exception as e:
+            log.warning("qBittorrent cache refresh failed: %s", e)
+        await asyncio.sleep(QBIT_REFRESH_SECONDS)
+
+
+def normalize_name(name: str) -> str:
+    """Normalize a release name for matching (dots/spaces/case don't matter)."""
+    return re.sub(r"[\W_]+", "", name.lower())
+
+
+def decorate_local_status(groups: list[dict]) -> None:
+    """Mark releases that exist in qBittorrent with their live state.
+
+    Matching is by info-hash for bot-added torrents (history.json) and by
+    normalized release name for everything else in qBittorrent. Sets
+    t["local"] to ("done",) | ("dl", progress) | ("gone",) | ("hist",) —
+    "gone" = bot-added but no longer in the client, "hist" = bot-added and
+    the client is unreachable.
     """
     history = load_history()
-    if not history:
+    torrents = [t for g in groups for t in g["torrents"]]
+    if not torrents:
         return
-    matched = [
-        t for g in groups for t in g["torrents"] if str(t["id"]) in history
-    ]
-    if not matched:
-        return
-    qbit_map = None
+    by_hash = by_name = None
     try:
-        qbit_map = {t.hash: t for t in qb().torrents_info()}
+        qbit_torrents = fetch_qbit_torrents()
     except Exception as e:
-        log.warning("qBittorrent unreachable while decorating search: %s", e)
-    for t in matched:
-        entry = history[str(t["id"])]
-        if qbit_map is None:
-            t["local"] = ("hist",)
+        log.warning("qBittorrent unreachable, using cached snapshot: %s", e)
+        qbit_torrents = load_qbit_cache()
+    if qbit_torrents is not None:
+        by_hash = {q.hash: q for q in qbit_torrents}
+        by_name = {normalize_name(q.name): q for q in qbit_torrents}
+    for t in torrents:
+        entry = history.get(str(t["id"]))
+        if by_hash is None:
+            if entry:
+                t["local"] = ("hist",)
             continue
-        qt = qbit_map.get(entry.get("hash"))
+        qt = by_hash.get(entry["hash"]) if entry else None
         if qt is None:
+            qt = by_name.get(normalize_name(t["title"]))
+        if qt is not None:
+            t["local"] = ("done",) if qt.progress >= 1 else ("dl", qt.progress)
+        elif entry:
             t["local"] = ("gone",)
-        elif qt.progress >= 1:
-            t["local"] = ("done",)
-        else:
-            t["local"] = ("dl", qt.progress)
 
 
 def local_mark(t: dict) -> str:
@@ -741,6 +816,12 @@ def build_search(context: ContextTypes.DEFAULT_TYPE, query: str, cat: str, page:
             marks += " 🆓"
         if any(t["snatched"] for t in ts):
             marks += " ✔️"
+        # strongest local status across the group's releases
+        for status in ("done", "dl", "gone", "hist"):
+            hit = next((t for t in ts if t.get("local", ("",))[0] == status), None)
+            if hit:
+                marks += f" {local_mark(hit)}"
+                break
         if len(ts) == 1:
             t = ts[0]
             detail = " · ".join(x for x in (t["resolution"], fmt_size(t["size"])) if x)
@@ -753,7 +834,10 @@ def build_search(context: ContextTypes.DEFAULT_TYPE, query: str, cat: str, page:
             f"      {g['cat']} · {detail}{marks}"
         )
     lines.append("")
-    lines.append("Tap a number to pick a release.  🆓 freeleech · ✔️ snatched before")
+    lines.append(
+        "Tap a number to pick a release.\n"
+        "🆓 freeleech · ✔️ snatched · ✅ downloaded · ⏬ downloading · 📥 added before"
+    )
 
     nums = [InlineKeyboardButton(str(i + 1), callback_data=f"sd:{i}") for i in range(len(results))]
     keyboard = [filter_row] + [nums[i : i + 5] for i in range(0, len(nums), 5)]
@@ -768,6 +852,47 @@ def build_search(context: ContextTypes.DEFAULT_TYPE, query: str, cat: str, page:
         keyboard.append(nav)
 
     return "\n".join(lines), InlineKeyboardMarkup(keyboard)
+
+
+async def send_detail_card(message, res: dict, gi: int) -> None:
+    """Send a detail card (poster if possible, text otherwise) as a new message."""
+    caption, kb = search_detail(res, gi)
+    if res["cover"]:
+        # always download the image locally and upload the bytes — never
+        # hand the URL to Telegram: its servers get geo-blocked by hosts
+        # like imgur/ibb ("not viewable in your region" placeholders), and
+        # tracker-related URLs shouldn't be fetched by third parties at all
+        img = fetch_cover(res["cover"])
+        if img:
+            try:
+                await message.reply_photo(
+                    img, caption=caption, reply_markup=kb, parse_mode=ParseMode.HTML
+                )
+                return
+            except Exception:
+                pass
+    await message.reply_text(
+        caption, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True
+    )
+
+
+def favorites_overview() -> tuple[str, InlineKeyboardMarkup]:
+    favorites = load_favorites()
+    if not favorites:
+        return (
+            "No favorites yet. Open a series from a search and tap ⭐ Add to favorites.",
+            InlineKeyboardMarkup([]),
+        )
+    rows = []
+    for gid, entry in sorted(favorites.items(), key=lambda kv: kv[1]["name"].lower()):
+        name = entry["name"] if len(entry["name"]) <= 32 else entry["name"][:31] + "…"
+        rows.append(
+            [
+                InlineKeyboardButton(f"⭐ {name}", callback_data=f"fv:o:{gid}"),
+                InlineKeyboardButton("🗑", callback_data=f"fv:d:{gid}"),
+            ]
+        )
+    return "⭐ <b>Favorites</b> — tap to open:", InlineKeyboardMarkup(rows)
 
 
 async def run_search(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str):
@@ -830,19 +955,21 @@ def search_detail(
     detailed = len(chunk) <= 5
     rows = []
     for n, (ti, t) in enumerate(chunk):
+        local = local_mark(t)
         marks = ("🆓" if t["free"] else "") + ("✔️" if t["snatched"] else "")
         if detailed:
             title = t["title"] if len(t["title"]) <= 55 else t["title"][:54] + "…"
             extra = f" · 💬 {t['subs']}" if t["subs"] else ""
             lines.append(
                 f"\n<b>{n + 1}.</b> <code>{html.escape(title)}</code>\n"
-                f"      🌱 {t['seeders']} / 🩸 {t['leechers']} · ⏬ {t['snatches']}{extra} {marks}"
+                f"      🌱 {t['seeders']} / 🩸 {t['leechers']} · ⏬ {t['snatches']}{extra} {marks}{local}"
             )
         tech = " ".join(x for x in (t["resolution"], t["codec"]) if x) or t["container"] or "?"
         ep = episode_tag(t["title"])
         if ep:
             tech = f"{ep} · {tech}"
-        label = f"⬇️ {n + 1}. {tech} · {fmt_size(t['size'])} · 🌱{t['seeders']} {marks}"
+        # downloaded state replaces the ⬇️ icon so it's visible at a glance
+        label = f"{local or '⬇️'} {n + 1}. {tech} · {fmt_size(t['size'])} · 🌱{t['seeders']} {marks}"
         rows.append([InlineKeyboardButton(label[:60], callback_data=f"s:{gi}:{ti}")])
 
     if pages > 1:
@@ -885,7 +1012,14 @@ def search_detail(
                 )
             rows.append(nav)
 
-    rows.append([InlineKeyboardButton("✖️ Close", callback_data="sx")])
+    is_fav = str(group.get("gid")) in load_favorites()
+    fav_label = "💔 Remove favorite" if is_fav else "⭐ Add to favorites"
+    rows.append(
+        [
+            InlineKeyboardButton(fav_label, callback_data=f"fv:t:{gi}:{season}:{page}"),
+            InlineKeyboardButton("✖️ Close", callback_data="sx"),
+        ]
+    )
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 
@@ -896,6 +1030,12 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /search <name>\n(or just send me the name as a message)")
         return
     await run_search(update, context, query)
+
+
+@restricted
+async def cmd_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text, kb = favorites_overview()
+    await update.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @restricted
@@ -1209,26 +1349,76 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     raise
             return
 
-        caption, kb = search_detail(res, i)
-        sent = False
-        if res["cover"]:
-            # always download the image locally and upload the bytes — never
-            # hand the URL to Telegram: its servers get geo-blocked by hosts
-            # like imgur/ibb ("not viewable in your region" placeholders), and
-            # tracker-related URLs shouldn't be fetched by third parties at all
-            img = fetch_cover(res["cover"])
-            if img:
-                try:
-                    await query.message.reply_photo(
-                        img, caption=caption, reply_markup=kb, parse_mode=ParseMode.HTML
+        await send_detail_card(query.message, res, i)
+
+    elif action == "fv":  # favorites: fv:t:<gi>:<season>:<page> | fv:o:<gid> | fv:d:<gid>
+        sub, _, arg = rest.partition(":")
+        favorites = load_favorites()
+
+        if sub == "t":  # toggle favorite from a detail card
+            gi_s, season_s, page_s = arg.split(":")
+            results = context.user_data.get("search", [])
+            gi = int(gi_s)
+            if gi >= len(results):
+                await query.answer("Search expired — search again.", show_alert=True)
+                return
+            res = results[gi]
+            gid = str(res.get("gid"))
+            if gid in favorites:
+                del favorites[gid]
+                await query.answer("Removed from favorites")
+            else:
+                name = res["name_en"] or res["name_he"] or res["torrents"][0]["title"]
+                if res["year"]:
+                    name += f" ({res['year']})"
+                favorites[gid] = {
+                    "name": name,
+                    "query": res["name_en"] or res["name_he"],
+                    "added": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                }
+                await query.answer("⭐ Added to favorites")
+            save_favorites(favorites)
+            caption, kb = search_detail(res, gi, season=int(season_s), page=int(page_s))
+            try:
+                if query.message.photo:
+                    await query.edit_message_caption(
+                        caption=caption, reply_markup=kb, parse_mode=ParseMode.HTML
                     )
-                    sent = True
-                except Exception:
-                    pass
-        if not sent:
-            await query.message.reply_text(
-                caption, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True
-            )
+                else:
+                    await query.edit_message_text(
+                        caption, reply_markup=kb, parse_mode=ParseMode.HTML,
+                        disable_web_page_preview=True,
+                    )
+            except BadRequest as e:
+                if "not modified" not in str(e).lower():
+                    raise
+
+        elif sub == "o":  # open a favorite: fresh search, jump to its card
+            entry = favorites.get(arg)
+            if not entry:
+                await query.answer("Not in favorites anymore.", show_alert=True)
+                return
+            await query.answer(f"Loading {entry['name']}…")
+            groups, _ = hebits_search(entry["query"])
+            group = next((g for g in groups if str(g.get("gid")) == arg), None)
+            if group is None:
+                await query.message.reply_text(
+                    f"Couldn't find “{entry['name']}” on HeBits anymore."
+                )
+                return
+            decorate_local_status([group])
+            context.user_data["search"] = [group]
+            context.user_data["search_view"] = (entry["query"], "a", 1)
+            await send_detail_card(query.message, group, 0)
+
+        elif sub == "d":  # remove from the favorites list view
+            if arg in favorites:
+                del favorites[arg]
+                save_favorites(favorites)
+                await query.answer("Removed")
+            else:
+                await query.answer()
+            await render(*favorites_overview())
 
     elif action == "sx":  # close a search detail message
         await query.answer()
@@ -1310,7 +1500,10 @@ def main():
     if not ALLOWED_USER_IDS:
         raise SystemExit("Set ALLOWED_USER_IDS in .env — the bot must not be open to everyone.")
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    async def start_background_jobs(app_: Application):
+        app_.create_task(qbit_cache_refresher())
+
+    app = Application.builder().token(BOT_TOKEN).post_init(start_background_jobs).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_start))
     app.add_handler(CommandHandler("list", cmd_list))
@@ -1318,6 +1511,8 @@ def main():
     app.add_handler(CommandHandler("categories", cmd_categories))
     app.add_handler(CommandHandler("search", cmd_search))
     app.add_handler(CommandHandler("cookie", cmd_cookie))
+    app.add_handler(CommandHandler("favorites", cmd_favorites))
+    app.add_handler(CommandHandler("fav", cmd_favorites))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.Document.ALL, on_document))

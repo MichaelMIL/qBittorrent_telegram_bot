@@ -83,6 +83,16 @@ either method.
   one and it goes into the tag → category add flow. TV shows are organized by
   **season** (newest first, episodes newest-first) with season buttons and page
   navigation built into the card
+- **/favorites** (or **/fav**) — your starred series. Star any show from its
+  detail card (⭐ Add to favorites); opening a favorite re-fetches it fresh so
+  you land on the newest season with live download markers. Remove with 💔 on
+  the card or 🗑 in the list. Stored in `favorites.json`
+- **Download indicators** — search results are checked against qBittorrent's
+  live torrent list: ⏬ 43% downloading, ✅ completed, 📥 added via the bot
+  before but no longer in qBittorrent. Bot-added torrents match exactly by
+  info-hash (recorded in `history.json`); anything else in qBittorrent matches
+  by release name, so torrents added outside the bot are recognized too. ✔️
+  still marks anything your HeBits account ever snatched
 - **Send a magnet link** or a **`.torrent` file** — the bot asks for a tag, then a category (existing, new, or none), then adds it
 - **Delete** always asks for confirmation and lets you choose *remove torrent only* or *remove + delete files*
 - **/cancel** — abort a pending add or tag entry
