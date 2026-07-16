@@ -93,6 +93,13 @@ either method.
   goes into the usual tag → category add flow. Each episode is announced once
   (a per-favorite watermark in `favorites.json` tracks the newest seen episode;
   the first check after starring just records the current state silently)
+- **/settings** — status overview (snapshot age, favorites count, cookie state)
+  with maintenance buttons: refresh the qBittorrent list, check favorites for
+  new episodes, validate the HeBits cookie. `/refresh` and `/check` are
+  command shortcuts for the first two. The **auto-check intervals** (qBittorrent
+  snapshot refresh and episode check) are configurable there too — pick
+  1/2/3/6/12/24 hours per timer; changes apply immediately and persist in
+  `bot_settings.json`
 - **Download indicators** — search results are checked against qBittorrent's
   live torrent list: ⏬ 43% downloading, ✅ completed, 📥 added via the bot
   before but no longer in qBittorrent. Bot-added torrents match exactly by

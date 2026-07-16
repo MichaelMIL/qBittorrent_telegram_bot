@@ -49,8 +49,13 @@ SEARCH_RESULTS = 10
 
 HISTORY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.json")
 QBIT_CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qbit_cache.json")
-QBIT_REFRESH_SECONDS = 3 * 3600
 FAVORITES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "favorites.json")
+SETTINGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_settings.json")
+
+DEFAULT_SETTINGS = {"qbit_refresh_hours": 3, "fav_check_hours": 3}
+INTERVAL_CHOICES = (1, 2, 3, 6, 12, 24)
+# set when an interval changes so sleeping background loops wake immediately
+interval_changed: asyncio.Event | None = None
 
 logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s %(message)s", level=logging.INFO
@@ -175,6 +180,36 @@ def load_history() -> dict:
             return json.load(f)
     except (OSError, ValueError):
         return {}
+
+
+def load_settings() -> dict:
+    try:
+        with open(SETTINGS_PATH) as f:
+            return {**DEFAULT_SETTINGS, **json.load(f)}
+    except (OSError, ValueError):
+        return dict(DEFAULT_SETTINGS)
+
+
+def save_setting(key: str, value) -> None:
+    settings = load_settings()
+    settings[key] = value
+    with open(SETTINGS_PATH, "w") as f:
+        json.dump(settings, f, indent=1)
+    if interval_changed is not None:
+        interval_changed.set()
+
+
+async def sleep_interval(key: str) -> None:
+    """Sleep for the configured interval; wake early if the interval changes."""
+    seconds = load_settings()[key] * 3600
+    if interval_changed is None:
+        await asyncio.sleep(seconds)
+        return
+    try:
+        await asyncio.wait_for(interval_changed.wait(), timeout=seconds)
+        interval_changed.clear()
+    except asyncio.TimeoutError:
+        pass
 
 
 def load_favorites() -> dict:
@@ -644,8 +679,42 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🆓 freeleech · ✔️ snatched on HeBits · ✅ downloaded · ⏬ downloading · "
         "📥 added before, gone now\n"
         "\n"
-        "🍪 /cookie — check or renew my HeBits session\n"
+        "⚙️ <b>/settings</b> — status &amp; maintenance: refresh the qBittorrent "
+        "list, check favorites for episodes, tune the auto-check intervals.\n"
+        "\n"
+        "📖 /help — command cheat-sheet\n"
         "🛟 /cancel — bail out of any flow, no questions asked",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@restricted
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "📖 <b>Command cheat-sheet</b>\n"
+        "\n"
+        "<b>Search &amp; add</b>\n"
+        "/search &lt;name&gt; — search HeBits (or just type a name)\n"
+        "🧲 send a magnet link or .torrent file to add it directly\n"
+        "\n"
+        "<b>Library</b>\n"
+        "/list — browse &amp; manage torrents\n"
+        "/tags — browse by tag\n"
+        "/categories — browse by category\n"
+        "\n"
+        "<b>Favorites</b>\n"
+        "/favorites or /fav — your starred series\n"
+        "/check — scan favorites for new episodes now\n"
+        "\n"
+        "<b>Maintenance</b>\n"
+        "/settings — status, auto-check intervals &amp; tools\n"
+        "/refresh — re-read the torrent list from qBittorrent\n"
+        "/cookie — check or update the HeBits session cookie\n"
+        "\n"
+        "<b>Misc</b>\n"
+        "/cancel — cancel the current flow\n"
+        "/start — the full tour\n"
+        "/help — this list",
         parse_mode=ParseMode.HTML,
     )
 
@@ -746,7 +815,7 @@ async def qbit_cache_refresher():
             log.info("qBittorrent cache refreshed: %d torrents", len(torrents))
         except Exception as e:
             log.warning("qBittorrent cache refresh failed: %s", e)
-        await asyncio.sleep(QBIT_REFRESH_SECONDS)
+        await sleep_interval("qbit_refresh_hours")
 
 
 # titles of releases we notified about, so the add-button flow can name them
@@ -834,7 +903,7 @@ async def favorites_episode_checker(app: "Application"):
                 log.info("sent %d new-episode notification(s)", len(notifications))
         except Exception as e:
             log.warning("favorites episode check failed: %s", e)
-        await asyncio.sleep(QBIT_REFRESH_SECONDS)
+        await sleep_interval("fav_check_hours")
 
 
 def normalize_name(name: str) -> str:
@@ -992,10 +1061,7 @@ async def send_detail_card(message, res: dict, gi: int) -> None:
 
 def favorites_overview() -> tuple[str, InlineKeyboardMarkup]:
     favorites = load_favorites()
-    footer = [
-        InlineKeyboardButton("🔄 Refresh", callback_data="fv:r"),
-        InlineKeyboardButton("🆕 Check episodes", callback_data="fv:c"),
-    ]
+    footer = [InlineKeyboardButton("🆕 Check episodes", callback_data="fv:c")]
     if not favorites:
         return (
             "No favorites yet. Open a series from a search and tap ⭐ Add to favorites.",
@@ -1155,6 +1221,118 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text, kb = favorites_overview()
     await update.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+def settings_overview(picker: str | None = None) -> tuple[str, InlineKeyboardMarkup]:
+    """Status summary + maintenance actions.
+
+    picker: 'q' or 'f' expands an hour-picker row for that interval.
+    """
+    settings = load_settings()
+    try:
+        with open(QBIT_CACHE_PATH) as f:
+            cache = json.load(f)
+        updated = datetime.fromisoformat(cache["updated"])
+        age = datetime.now(timezone.utc) - updated
+        mins = int(age.total_seconds() // 60)
+        ago = f"{mins} min ago" if mins < 120 else f"{mins // 60} h ago"
+        snapshot = f"{len(cache['torrents'])} torrents · updated {ago}"
+    except (OSError, ValueError, KeyError):
+        snapshot = "no snapshot yet"
+
+    lines = [
+        "⚙️ <b>Settings &amp; status</b>",
+        "",
+        f"🗄 qBittorrent snapshot: {snapshot}",
+        f"⭐ Favorites: {len(load_favorites())}",
+        f"🧾 Bot-added torrents on record: {len(load_history())}",
+        f"🍪 HeBits cookie: {'configured' if HEBITS_COOKIE else '❗ not set'}",
+        "",
+        "⏱ <b>Auto-check intervals</b> — tap to change:",
+    ]
+
+    def picker_row(kind: str, current: int) -> list[InlineKeyboardButton]:
+        return [
+            InlineKeyboardButton(
+                f"•{h}h" if h == current else f"{h}h",
+                callback_data="noop" if h == current else f"st:s{kind}:{h}",
+            )
+            for h in INTERVAL_CHOICES
+        ]
+
+    rows = [
+        [
+            InlineKeyboardButton(
+                f"🗄 qBittorrent refresh: every {settings['qbit_refresh_hours']} h",
+                callback_data="st:iq",
+            )
+        ]
+    ]
+    if picker == "q":
+        rows.append(picker_row("q", settings["qbit_refresh_hours"]))
+    rows.append(
+        [
+            InlineKeyboardButton(
+                f"⭐ Episode check: every {settings['fav_check_hours']} h",
+                callback_data="st:if",
+            )
+        ]
+    )
+    if picker == "f":
+        rows.append(picker_row("f", settings["fav_check_hours"]))
+    rows += [
+        [InlineKeyboardButton("🔄 Refresh qBittorrent list", callback_data="st:q")],
+        [InlineKeyboardButton("🆕 Check favorites for episodes", callback_data="st:c")],
+        [InlineKeyboardButton("🍪 Validate HeBits cookie", callback_data="st:k")],
+        [InlineKeyboardButton("🔃 Reload this view", callback_data="st:r")],
+    ]
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+
+@restricted
+async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text, kb = settings_overview()
+    await update.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+async def run_favorites_check(message) -> None:
+    """Check all favorites for new episodes and report into the chat."""
+    loading = await message.reply_text("⏳ Checking favorites for new episodes…")
+    try:
+        notifications = await asyncio.to_thread(collect_new_episodes)
+    except Exception as e:
+        await loading.edit_text(f"❌ Check failed: {e}")
+        return
+    if not notifications:
+        await loading.edit_text("✅ No new episodes for your favorites.")
+        return
+    await loading.delete()
+    for note in notifications:
+        await message.reply_text(
+            note["text"], reply_markup=note["kb"], parse_mode=ParseMode.HTML
+        )
+
+
+@restricted
+async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await run_favorites_check(update.message)
+
+
+@restricted
+async def cmd_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = await update.message.reply_text("⏳ Refreshing the qBittorrent list…")
+    try:
+        torrents = await asyncio.to_thread(fetch_qbit_torrents)
+    except Exception as e:
+        await msg.edit_text(
+            f"❌ Couldn't reach qBittorrent ({e.__class__.__name__}) — "
+            "the last snapshot stays in place."
+        )
+        return
+    done = sum(1 for t in torrents if t.progress >= 1)
+    await msg.edit_text(
+        f"✅ qBittorrent list refreshed — {len(torrents)} torrents, {done} completed."
+    )
 
 
 @restricted
@@ -1539,26 +1717,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             await loading.delete()
 
-        elif sub == "r":  # refresh the favorites list view
-            await query.answer()
-            await render(*favorites_overview())
-
         elif sub == "c":  # check all favorites for new episodes right now
             await query.answer("Checking favorites…")
-            loading = await query.message.reply_text("⏳ Checking favorites for new episodes…")
-            try:
-                notifications = await asyncio.to_thread(collect_new_episodes)
-            except Exception as e:
-                await loading.edit_text(f"❌ Check failed: {e}")
-                return
-            if not notifications:
-                await loading.edit_text("✅ No new episodes for your favorites.")
-                return
-            await loading.delete()
-            for note in notifications:
-                await query.message.reply_text(
-                    note["text"], reply_markup=note["kb"], parse_mode=ParseMode.HTML
-                )
+            await run_favorites_check(query.message)
 
         elif sub == "d":  # remove from the favorites list view
             if arg in favorites:
@@ -1568,6 +1729,43 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.answer()
             await render(*favorites_overview())
+
+    elif action == "st":  # settings actions
+        if rest == "q":  # refresh qBittorrent snapshot
+            await query.answer("Refreshing…")
+            try:
+                torrents = await asyncio.to_thread(fetch_qbit_torrents)
+                await query.answer(f"Refreshed: {len(torrents)} torrents")
+            except Exception as e:
+                await query.answer(
+                    f"qBittorrent unreachable ({e.__class__.__name__})", show_alert=True
+                )
+            await render(*settings_overview())
+        elif rest == "c":  # check favorites now
+            await query.answer("Checking favorites…")
+            await run_favorites_check(query.message)
+        elif rest == "k":  # validate the HeBits cookie
+            await query.answer()
+            user = await asyncio.to_thread(hebits_whoami, HEBITS_COOKIE) if HEBITS_COOKIE else None
+            if user:
+                await query.answer(f"✅ Cookie valid — logged in as {user}", show_alert=True)
+            else:
+                await query.answer(
+                    "❌ Cookie missing or expired — use /cookie <new value>.",
+                    show_alert=True,
+                )
+        elif rest == "r":  # reload the view
+            await query.answer()
+            await render(*settings_overview())
+        elif rest in ("iq", "if"):  # expand an interval picker
+            await query.answer()
+            await render(*settings_overview(picker=rest[1]))
+        elif rest.startswith("sq:") or rest.startswith("sf:"):  # set an interval
+            kind, _, hours = rest.partition(":")
+            key = "qbit_refresh_hours" if kind == "sq" else "fav_check_hours"
+            save_setting(key, int(hours))
+            await query.answer(f"Set to every {hours} h")
+            await render(*settings_overview())
 
     elif action == "nf":  # add a release from a new-episode notification
         tid = int(rest)
@@ -1666,12 +1864,14 @@ def main():
         raise SystemExit("Set ALLOWED_USER_IDS in .env — the bot must not be open to everyone.")
 
     async def start_background_jobs(app_: Application):
+        global interval_changed
+        interval_changed = asyncio.Event()
         app_.create_task(qbit_cache_refresher())
         app_.create_task(favorites_episode_checker(app_))
 
     app = Application.builder().token(BOT_TOKEN).post_init(start_background_jobs).build()
     app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("help", cmd_start))
+    app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("list", cmd_list))
     app.add_handler(CommandHandler("tags", cmd_tags))
     app.add_handler(CommandHandler("categories", cmd_categories))
@@ -1679,6 +1879,9 @@ def main():
     app.add_handler(CommandHandler("cookie", cmd_cookie))
     app.add_handler(CommandHandler("favorites", cmd_favorites))
     app.add_handler(CommandHandler("fav", cmd_favorites))
+    app.add_handler(CommandHandler("check", cmd_check))
+    app.add_handler(CommandHandler("refresh", cmd_refresh))
+    app.add_handler(CommandHandler("settings", cmd_settings))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.Document.ALL, on_document))
