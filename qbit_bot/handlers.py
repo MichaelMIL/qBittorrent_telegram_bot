@@ -57,10 +57,18 @@ def restricted(func):
         user = update.effective_user
         if not user or user.id not in config.ALLOWED_USER_IDS:
             log.warning("Unauthorized access attempt from %s", user.id if user else "?")
+            uid = user.id if user else "unknown"
             if update.callback_query:
-                await update.callback_query.answer("Not authorized.", show_alert=True)
+                await update.callback_query.answer(
+                    f"⛔ Not authorized. Your user id: {uid}", show_alert=True
+                )
             elif update.message:
-                await update.message.reply_text("⛔ You are not authorized to use this bot.")
+                await update.message.reply_text(
+                    "⛔ You are not authorized to use this bot.\n"
+                    f"Your Telegram user id is: <code>{uid}</code>\n"
+                    "Ask the bot's owner to add it to ALLOWED_USER_IDS.",
+                    parse_mode=ParseMode.HTML,
+                )
             return
         try:
             return await func(update, context)

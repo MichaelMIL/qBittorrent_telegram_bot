@@ -36,9 +36,12 @@ downloads, star favorite series, and get pinged when a new episode drops.
 - **Button bar** — a persistent reply keyboard (📚 List · ⭐ Favorites ·
   🆕 Check · 🏷 Tags · 📁 Categories · ⚙️ Settings) makes daily use
   tap-only; typing is needed only for searches and naming new tags
-- **Private** — the bot answers only the Telegram user IDs you allow, and all
-  HeBits traffic (search, downloads, cover images) goes from your machine,
-  never through Telegram's servers
+- **Private** — the bot only serves the Telegram user IDs in
+  `ALLOWED_USER_IDS`; anyone else gets a rejection message that includes
+  their own user id, so adding a trusted person is as easy as having them
+  message the bot and copying the id they're shown. All HeBits traffic
+  (search, downloads, cover images) goes from your machine, never through
+  Telegram's servers
 
 ## Project layout
 
