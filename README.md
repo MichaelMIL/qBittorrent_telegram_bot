@@ -77,10 +77,9 @@ data/                  runtime state (git-ignored): history.json,
 
 1. [@BotFather](https://t.me/BotFather) → `/newbot` → copy the **token**
 2. Get your numeric user ID: just message **your new bot** once it's running —
-   unauthorized users are shown their own id in the rejection message. (For
-   the very first start you can leave `ALLOWED_USER_IDS` set to any number,
-   message the bot, copy the id it shows you, then update `.env` and
-   restart. [@userinfobot](https://t.me/userinfobot) works too.)
+   unauthorized users are shown their own id in the rejection message. For
+   the very first start, leave `ALLOWED_USER_IDS` set to any number, message
+   the bot, copy the id it shows you, then update `.env` and restart.
 
 ### 3. Configure & run
 
