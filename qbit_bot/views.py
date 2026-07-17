@@ -406,12 +406,15 @@ def search_detail(
                 f"\n<b>{n + 1}.</b> <code>{html.escape(title)}</code>\n"
                 f"      🌱 {t['seeders']} / 🩸 {t['leechers']} · ⏬ {t['snatches']}{extra} {marks}{local}"
             )
-        tech = " ".join(x for x in (t["resolution"], t["codec"]) if x) or t["container"] or "?"
+        tech = t["resolution"] or t["container"] or "?"
         ep = episode_tag(t["title"])
         if ep:
             tech = f"{ep} · {tech}"
-        # downloaded state replaces the ⬇️ icon so it's visible at a glance
-        label = f"{local or '⬇️'} {n + 1}. {tech} · {fmt_size(t['size'])} · 🌱{t['seeders']} {marks}"
+        # icons lead: downloaded state (replaces ⬇️), freeleech/snatched, seeders
+        label = (
+            f"{local or '⬇️'}{marks} 🌱{t['seeders']} · "
+            f"{n + 1}. {tech} · {fmt_size(t['size'])}"
+        )
         rows.append([InlineKeyboardButton(label[:60], callback_data=f"s:{gi}:{ti}")])
 
     if pages > 1:

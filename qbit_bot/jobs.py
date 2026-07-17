@@ -11,7 +11,7 @@ from telegram.ext import Application
 
 from . import config
 from .hebits import HebitsError, hebits_search
-from .qbit import fetch_qbit_torrents
+from .qbit import decorate_local_status, fetch_qbit_torrents
 from .storage import load_favorites, save_favorites, sleep_interval
 from .utils import episode_key, episode_tag, fmt_size
 
@@ -62,9 +62,21 @@ def collect_new_episodes() -> list[dict]:
         current_max = max(k for k, _ in keyed)
         stored = entry.get("last_ep")
         if stored is None:
-            entry["last_ep"] = list(current_max)
+            # baseline = newest episode the user already HAS (downloaded or
+            # snatched), so an undownloaded newer episode is announced right
+            # away; only with no downloads at all do we baseline to the site's
+            # newest to avoid spamming the whole back-catalog
+            decorate_local_status([group])
+            have = [
+                k
+                for k, t in keyed
+                if t.get("snatched") or (t.get("local") or ("",))[0] in ("done", "dl")
+            ]
+            stored = list(max(have)) if have else list(current_max)
+            entry["last_ep"] = stored
             changed = True
-            continue
+            if tuple(stored) >= current_max:
+                continue
         new = sorted(
             ((k, t) for k, t in keyed if k > tuple(stored)),
             key=lambda kt: (kt[0], kt[1]["seeders"] or 0),
@@ -86,11 +98,11 @@ def collect_new_episodes() -> list[dict]:
         rows = []
         for k, t in new[:12]:
             NOTIFIED_TITLES[t["id"]] = t["title"]
-            tech = " ".join(x for x in (t["resolution"], t["codec"]) if x) or "?"
-            marks = ("🆓" if t["free"] else "")
+            tech = t["resolution"] or "?"
+            marks = "🆓" if t["free"] else ""
             label = (
-                f"⬇️ {episode_tag(t['title'])} · {tech} · "
-                f"{fmt_size(t['size'])} · 🌱{t['seeders']} {marks}"
+                f"⬇️{marks} 🌱{t['seeders']} · "
+                f"{episode_tag(t['title'])} · {tech} · {fmt_size(t['size'])}"
             )
             rows.append([InlineKeyboardButton(label[:60], callback_data=f"nf:{t['id']}")])
         rows.append([InlineKeyboardButton("✖️ Dismiss", callback_data="sx")])
