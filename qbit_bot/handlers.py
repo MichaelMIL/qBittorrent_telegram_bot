@@ -44,6 +44,8 @@ from .views import (
     build_add_cat_keyboard,
     build_add_tag_keyboard,
     build_detail,
+    build_ds_cat_keyboard,
+    build_ds_tag_keyboard,
     build_list,
     build_resolution_keyboard,
     build_search,
@@ -51,6 +53,7 @@ from .views import (
     build_use_default_keyboard,
     categories_overview,
     default_label,
+    favorite_menu,
     favorites_overview,
     plex_library_picker,
     plex_map_overview,
@@ -366,7 +369,7 @@ async def cmd_cookie(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     popped = [
         context.user_data.pop(key, None)
-        for key in ("pending_add", "add_tag", "awaiting", "set_default")
+        for key in ("pending_add", "add_tag", "awaiting", "set_default", "default_setup")
     ]
     await update.message.reply_text(
         "Cancelled." if any(popped) else "Nothing to cancel.",
@@ -410,6 +413,32 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await asyncio.to_thread(_create)
             await do_add(update, context, context.user_data.pop("add_tag", None), cat)
+        elif kind in ("new_tag_ds", "new_cat_ds"):  # typed name in the ⚡ default wizard
+            setup = context.user_data.get("default_setup")
+            if not setup:
+                await update.message.reply_text("Expired — tap ⚡ on the favorite again.")
+                return
+            if kind == "new_tag_ds":
+                setup["tag"] = tag
+                await update.message.reply_text(
+                    f"🏷 “{tag}” noted. Now pick a 📁 category:",
+                    reply_markup=await asyncio.to_thread(build_ds_cat_keyboard, context),
+                )
+            else:
+                cat = text.strip()
+
+                def _create_ds():
+                    try:
+                        qb().torrents_create_category(name=cat)
+                    except qbittorrentapi.exceptions.Conflict409Error:
+                        pass  # category already exists — just use it
+
+                await asyncio.to_thread(_create_ds)
+                setup["category"] = cat
+                await update.message.reply_text(
+                    f"📁 “{cat}” it is. 📐 Preferred resolution?",
+                    reply_markup=build_resolution_keyboard("ds:r"),
+                )
         return
 
     button_actions = {
@@ -799,25 +828,65 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             await loading.delete()
 
-        elif sub == "a":  # toggle ⚡ auto-add for a favorite
+        elif sub == "l":  # back to the favorites list
+            await query.answer()
+            await render(*favorites_overview())
+
+        elif sub == "a":  # per-favorite options menu
+            if arg not in favorites:
+                await query.answer("Not in favorites anymore.", show_alert=True)
+                await render(*favorites_overview())
+            else:
+                await query.answer()
+                await render(*favorite_menu(arg))
+
+        elif sub == "g":  # toggle ⚡ auto-add
             entry = favorites.get(arg)
             if not entry:
                 await query.answer("Not in favorites anymore.", show_alert=True)
+                await render(*favorites_overview())
             elif entry.get("auto"):
                 update_favorite(arg, auto=False)
                 await query.answer("💤 Auto-add off — I'll just notify you.")
+                await render(*favorite_menu(arg))
             else:
                 default = load_series_defaults().get(arg)
                 if not default or not default.get("category"):
-                    await query.answer(
-                        "No default for this series yet — add one episode manually "
-                        "and tap 📌 to set it first.",
-                        show_alert=True,
+                    # no default yet — walk through setting one right here
+                    context.user_data["default_setup"] = {
+                        "gid": arg,
+                        "name": entry["name"],
+                        "enable": True,
+                    }
+                    await query.answer()
+                    await render(
+                        f"⚡ <b>{html.escape(entry['name'])}</b> needs a default "
+                        "before I can auto-add its episodes.\n\n"
+                        "Pick a 🏷 tag for them:",
+                        await asyncio.to_thread(build_ds_tag_keyboard, context),
                     )
-                else:
-                    update_favorite(arg, auto=True)
-                    await query.answer(f"⚡ Auto-add on: {default_label(default)}"[:190])
-            await render(*favorites_overview())
+                    return
+                update_favorite(arg, auto=True)
+                await query.answer(f"⚡ Auto-add on: {default_label(default)}"[:190])
+                await render(*favorite_menu(arg))
+
+        elif sub == "e":  # edit (or set) the series default
+            entry = favorites.get(arg)
+            if not entry:
+                await query.answer("Not in favorites anymore.", show_alert=True)
+                await render(*favorites_overview())
+            else:
+                context.user_data["default_setup"] = {
+                    "gid": arg,
+                    "name": entry["name"],
+                    "enable": False,
+                }
+                await query.answer()
+                await render(
+                    f"✏️ <b>{html.escape(entry['name'])}</b> — set the default "
+                    "for new episodes.\n\nPick a 🏷 tag:",
+                    await asyncio.to_thread(build_ds_tag_keyboard, context),
+                )
 
         elif sub == "c":  # check all favorites for new episodes right now
             await query.answer("Checking favorites…")
@@ -1035,6 +1104,87 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Next episodes of this series add in one tap — or flip on ⚡ auto-add "
             "in /fav and I'll grab them for you."
         )
+
+    elif action == "ds":  # set-a-default wizard from favorites: ds:t|c|r:<arg> | ds:x
+        setup = context.user_data.get("default_setup")
+        sub, _, arg = rest.partition(":")
+        if sub == "x":
+            setup = context.user_data.pop("default_setup", None)
+            await query.answer("Cancelled")
+            if setup:
+                await render(*favorite_menu(setup["gid"]))
+            else:
+                await render(*favorites_overview())
+            return
+        if not setup:
+            await query.answer("Expired — tap ⚡ on the favorite again.", show_alert=True)
+            return
+        if sub == "t":  # tag picked
+            if arg == "new":
+                context.user_data["awaiting"] = ("new_tag_ds",)
+                await query.answer()
+                await query.message.reply_text("Type the tag name (or /cancel):")
+                return
+            if arg == "none":
+                setup["tag"] = None
+            else:
+                tags = context.bot_data.get("tags", [])
+                i = int(arg)
+                if i >= len(tags):
+                    await query.answer("Tag list changed — pick again.")
+                    await render(
+                        "Pick a 🏷 tag:",
+                        await asyncio.to_thread(build_ds_tag_keyboard, context),
+                    )
+                    return
+                setup["tag"] = tags[i]
+            await query.answer()
+            await render(
+                f"⚡ <b>{html.escape(setup['name'])}</b>\nNow pick a 📁 category "
+                "(this is where auto-added episodes go):",
+                await asyncio.to_thread(build_ds_cat_keyboard, context),
+            )
+        elif sub == "c":  # category picked
+            if arg == "new":
+                context.user_data["awaiting"] = ("new_cat_ds",)
+                await query.answer()
+                await query.message.reply_text("Type the category name (or /cancel):")
+                return
+            cats = context.bot_data.get("cats", [])
+            i = int(arg)
+            if i >= len(cats):
+                await query.answer("Category list changed — pick again.")
+                await render(
+                    "Pick a 📁 category:",
+                    await asyncio.to_thread(build_ds_cat_keyboard, context),
+                )
+                return
+            setup["category"] = cats[i]
+            await query.answer()
+            await render(
+                f"⚡ <b>{html.escape(setup['name'])}</b>\n📐 Preferred resolution? "
+                "Auto-add only grabs episodes in this resolution:",
+                build_resolution_keyboard("ds:r"),
+            )
+        elif sub == "r":  # resolution picked → save default + turn auto-add on
+            context.user_data.pop("default_setup", None)
+            if not setup.get("category"):
+                await query.answer("Expired — tap ⚡ on the favorite again.", show_alert=True)
+                return
+            defaults = load_series_defaults()
+            defaults[setup["gid"]] = {
+                "name": setup["name"],
+                "tag": setup.get("tag"),
+                "category": setup["category"],
+                "resolution": None if arg == "any" else arg,
+            }
+            save_series_defaults(defaults)
+            if setup.get("enable"):
+                update_favorite(setup["gid"], auto=True)
+                await query.answer("📌 Default saved — ⚡ auto-add is on")
+            else:
+                await query.answer("📌 Default saved")
+            await render(*favorite_menu(setup["gid"]))
 
     elif action == "at":  # tag choice while adding (step 1 of 2)
         if rest == "cancel":

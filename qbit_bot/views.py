@@ -208,9 +208,38 @@ def default_label(default: dict) -> str:
 RES_CHOICES = ("2160p", "1080p", "720p", "480p")
 
 
-def build_resolution_keyboard() -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(r, callback_data=f"dr:{r}") for r in RES_CHOICES]]
-    rows.append([InlineKeyboardButton("🌐 Any resolution", callback_data="dr:any")])
+def build_resolution_keyboard(prefix: str = "dr") -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(r, callback_data=f"{prefix}:{r}") for r in RES_CHOICES]]
+    rows.append([InlineKeyboardButton("🌐 Any resolution", callback_data=f"{prefix}:any")])
+    return InlineKeyboardMarkup(rows)
+
+
+# keyboards for the set-a-default wizard launched from the favorites view
+
+def build_ds_tag_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
+    tags = get_tags(context)
+    rows = [
+        [InlineKeyboardButton(f"🏷 {tag}", callback_data=f"ds:t:{i}")]
+        for i, tag in enumerate(tags)
+    ]
+    rows.append(
+        [
+            InlineKeyboardButton("➕ New tag", callback_data="ds:t:new"),
+            InlineKeyboardButton("No tag", callback_data="ds:t:none"),
+        ]
+    )
+    rows.append([InlineKeyboardButton("✖️ Cancel", callback_data="ds:x")])
+    return InlineKeyboardMarkup(rows)
+
+
+def build_ds_cat_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
+    cats = get_categories(context)
+    rows = [
+        [InlineKeyboardButton(f"📁 {cat}", callback_data=f"ds:c:{i}")]
+        for i, cat in enumerate(cats)
+    ]
+    rows.append([InlineKeyboardButton("➕ New category", callback_data="ds:c:new")])
+    rows.append([InlineKeyboardButton("✖️ Cancel", callback_data="ds:x")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -411,9 +440,41 @@ def favorites_overview() -> tuple[str, InlineKeyboardMarkup]:
     rows.append(footer)
     text = (
         "⭐ <b>Favorites</b> — tap to open:\n"
-        "⚡ auto-adds new episodes with the series default · 💤 just notifies"
+        "⚡ auto-adds new episodes · 💤 just notifies — tap the icon for "
+        "options (toggle, edit default)"
     )
     return text, InlineKeyboardMarkup(rows)
+
+
+def favorite_menu(gid: str) -> tuple[str, InlineKeyboardMarkup]:
+    """Per-favorite options: auto-add toggle and the series default."""
+    entry = load_favorites().get(gid)
+    if entry is None:
+        return favorites_overview()
+    default = load_series_defaults().get(gid)
+    auto = bool(entry.get("auto"))
+    lines = [
+        f"⭐ <b>{html.escape(entry['name'])}</b>",
+        "",
+        f"📌 Default: {default_label(default) if default else 'not set'}",
+        f"⚡ Auto-add: {'on — new episodes are grabbed automatically' if auto else 'off — new episodes just notify'}",
+    ]
+    rows = [
+        [
+            InlineKeyboardButton(
+                "💤 Turn auto-add off" if auto else "⚡ Turn auto-add on",
+                callback_data=f"fv:g:{gid}",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "✏️ Edit default" if default else "📌 Set default",
+                callback_data=f"fv:e:{gid}",
+            )
+        ],
+        [InlineKeyboardButton("« Favorites", callback_data="fv:l")],
+    ]
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 
 RELEASES_PER_PAGE = 10

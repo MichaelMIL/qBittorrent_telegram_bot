@@ -33,9 +33,11 @@ downloads, star favorite series, and get pinged when a new episode drops.
 - **⚡ Auto-add** — flip the ⚡ toggle on a favorite (in `/fav`) and new
   episodes are grabbed automatically: the best-seeded release in the series'
   preferred resolution is added with its default tag + category, and you get
-  a summary message instead of buttons. Episodes not yet available in that
-  resolution fall back to the normal pick-a-version notification, and so
-  does anything that fails to add
+  a summary message instead of buttons. The ⚡/💤 icon opens a per-series
+  menu: toggle auto-add, and set or ✏️ edit the default (tag → category →
+  resolution) right there. Episodes
+  not yet available in that resolution fall back to the normal
+  pick-a-version notification, and so does anything that fails to add
 - **Manage** — `/list` shows everything in qBittorrent; tap a torrent to see
   progress/speeds/ETA, pause/resume, toggle tags, or delete it (with or
   without files, always with confirmation). Browse by `/tags` or `/categories`
