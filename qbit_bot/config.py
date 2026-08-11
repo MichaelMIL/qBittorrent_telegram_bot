@@ -50,6 +50,7 @@ QBIT_CACHE_PATH = str(DATA_DIR / "qbit_cache.json")
 SETTINGS_PATH = str(DATA_DIR / "bot_settings.json")
 WATCH_PATH = str(DATA_DIR / "watch.json")
 SERIES_DEFAULTS_PATH = str(DATA_DIR / "series_defaults.json")
+NOTIFIED_PATH = str(DATA_DIR / "notified.json")
 
 logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s %(message)s", level=logging.INFO

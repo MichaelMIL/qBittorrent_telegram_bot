@@ -9,6 +9,7 @@ from .config import (
     DEFAULT_SETTINGS,
     FAVORITES_PATH,
     HISTORY_PATH,
+    NOTIFIED_PATH,
     QBIT_CACHE_PATH,
     SERIES_DEFAULTS_PATH,
     SETTINGS_PATH,
@@ -72,7 +73,7 @@ def save_favorites(favorites: dict) -> None:
 
 
 def load_watches() -> dict:
-    """info-hash (str, lowercase) -> {name, chat_id, added} of torrents whose
+    """info-hash (str, lowercase) -> {name, chat_ids, added} of torrents whose
     completion should be announced."""
     try:
         with open(WATCH_PATH) as f:
@@ -86,14 +87,41 @@ def save_watches(watches: dict) -> None:
         json.dump(watches, f, ensure_ascii=False, indent=1)
 
 
-def add_watch(info_hash: str, name: str, chat_id: int) -> None:
+def add_watch(info_hash: str, name: str, chat_ids: list[int]) -> None:
     watches = load_watches()
     watches[info_hash.lower()] = {
         "name": name,
-        "chat_id": chat_id,
+        "chat_ids": list(chat_ids),
         "added": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
     save_watches(watches)
+
+
+NOTIFIED_KEEP = 300
+
+
+def record_notified(tid: int, meta: dict) -> None:
+    """Persist a notified release's metadata (title, gid, series) so its add
+    button keeps working across bot restarts. Oldest entries are pruned."""
+    try:
+        with open(NOTIFIED_PATH) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {}
+    data.pop(str(tid), None)  # re-insert at the end so it counts as newest
+    data[str(tid)] = meta
+    while len(data) > NOTIFIED_KEEP:
+        del data[next(iter(data))]
+    with open(NOTIFIED_PATH, "w") as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+
+
+def get_notified(tid: int) -> dict:
+    try:
+        with open(NOTIFIED_PATH) as f:
+            return json.load(f).get(str(tid), {})
+    except (OSError, ValueError):
+        return {}
 
 
 def load_series_defaults() -> dict:

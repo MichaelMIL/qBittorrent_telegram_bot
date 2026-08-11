@@ -21,11 +21,12 @@ from .hebits import (
     hebits_whoami,
     save_hebits_cookie,
 )
-from .jobs import NOTIFIED_META, collect_new_episodes
+from .jobs import collect_new_episodes
 from .plex import PlexError, plex_refresh, plex_sections
 from .qbit import decorate_local_status, fetch_qbit_torrents, qb
 from .storage import (
     add_watch,
+    get_notified,
     load_favorites,
     load_series_defaults,
     record_history,
@@ -41,6 +42,7 @@ from .views import (
     build_add_tag_keyboard,
     build_detail,
     build_list,
+    build_resolution_keyboard,
     build_search,
     build_tag_menu,
     build_use_default_keyboard,
@@ -144,6 +146,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Star a series from its card, then /fav opens it in two taps. Every 3 "
         "hours I quietly check your favorites — when a new episode drops, I ping "
         "you with the available versions so you just tap the one you want. 🍿\n"
+        "Or go fully hands-free: flip ⚡ <b>auto-add</b> on a favorite (in /fav) "
+        "and I'll grab new episodes myself — best release in your preferred "
+        "resolution, filed under the series default.\n"
         "\n"
         "🧭 <b>Marker cheat-sheet</b>\n"
         "🆓 freeleech · ✔️ snatched on HeBits · ✅ downloaded · ⏬ downloading · "
@@ -197,19 +202,19 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @restricted
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text, kb = build_list(context, "a", 0)
+    text, kb = await asyncio.to_thread(build_list, context, "a", 0)
     await update.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @restricted
 async def cmd_tags(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text, kb = tags_overview(context)
+    text, kb = await asyncio.to_thread(tags_overview, context)
     await update.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @restricted
 async def cmd_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text, kb = categories_overview(context)
+    text, kb = await asyncio.to_thread(categories_overview, context)
     await update.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
@@ -220,7 +225,7 @@ async def run_search(update: Update, context: ContextTypes.DEFAULT_TYPE, query: 
     # is edited into the results.
     msg = await update.message.reply_text(f"🔎 Searching HeBits for “{query}”…")
     try:
-        text, kb = build_search(context, query, "a", 1)
+        text, kb = await asyncio.to_thread(build_search, context, query, "a", 1)
     except Exception:
         try:
             await msg.delete()
@@ -312,7 +317,7 @@ async def cmd_cookie(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Or run hebits_cookie.py to grab it from your browser automatically."
             )
             return
-        user = hebits_whoami(config.HEBITS_COOKIE)
+        user = await asyncio.to_thread(hebits_whoami, config.HEBITS_COOKIE)
         if user:
             await update.message.reply_text(f"✅ HeBits cookie is valid — logged in as “{user}”.")
         else:
@@ -322,7 +327,7 @@ async def cmd_cookie(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
-    user = hebits_whoami(cookie)
+    user = await asyncio.to_thread(hebits_whoami, cookie)
     if not user:
         await update.message.reply_text(
             "❌ That cookie didn't work — HeBits doesn't recognize the session.\n"
@@ -366,8 +371,10 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tag = text.replace(",", " ").strip()
         if kind == "new_tag_torrent":
             torrent_hash = awaiting[1]
-            qb().torrents_add_tags(tags=tag, torrent_hashes=torrent_hash)
-            detail, kb = build_detail(context, torrent_hash)
+            await asyncio.to_thread(
+                lambda: qb().torrents_add_tags(tags=tag, torrent_hashes=torrent_hash)
+            )
+            detail, kb = await asyncio.to_thread(build_detail, context, torrent_hash)
             await update.message.reply_text(
                 f"✅ Tag “{tag}” added.\n\n{detail}", reply_markup=kb, parse_mode=ParseMode.HTML
             )
@@ -375,14 +382,18 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["add_tag"] = tag
             await update.message.reply_text(
                 f"🏷 Tag “{tag}” noted. Category?",
-                reply_markup=build_add_cat_keyboard(context),
+                reply_markup=await asyncio.to_thread(build_add_cat_keyboard, context),
             )
         elif kind == "new_cat_add":
             cat = text.strip()
-            try:
-                qb().torrents_create_category(name=cat)
-            except qbittorrentapi.exceptions.Conflict409Error:
-                pass  # category already exists — just use it
+
+            def _create():
+                try:
+                    qb().torrents_create_category(name=cat)
+                except qbittorrentapi.exceptions.Conflict409Error:
+                    pass  # category already exists — just use it
+
+            await asyncio.to_thread(_create)
             await do_add(update, context, context.user_data.pop("add_tag", None), cat)
         return
 
@@ -403,7 +414,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["pending_add"] = {"magnet": text}
         await update.message.reply_text(
             "🧲 Got the magnet link. Tag it?",
-            reply_markup=build_add_tag_keyboard(context),
+            reply_markup=await asyncio.to_thread(build_add_tag_keyboard, context),
         )
     elif config.HEBITS_COOKIE:
         # any other text is treated as a HeBits search
@@ -425,7 +436,7 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["pending_add"] = {"file": data, "name": doc.file_name}
     await update.message.reply_text(
         f"📄 Got <b>{html.escape(doc.file_name)}</b>. Tag it?",
-        reply_markup=build_add_tag_keyboard(context),
+        reply_markup=await asyncio.to_thread(build_add_tag_keyboard, context),
         parse_mode=ParseMode.HTML,
     )
 
@@ -445,7 +456,7 @@ async def start_add_flow(message, context: ContextTypes.DEFAULT_TYPE, title: str
     else:
         await message.reply_text(
             f"📄 <b>{html.escape(title)}</b>\nTag it?",
-            reply_markup=build_add_tag_keyboard(context),
+            reply_markup=await asyncio.to_thread(build_add_tag_keyboard, context),
             parse_mode=ParseMode.HTML,
         )
 
@@ -467,18 +478,20 @@ async def do_add(
         await reply("Nothing pending — send a magnet link or .torrent file first.")
         return
 
-    client = qb()
     kwargs = {}
     if tag:
         kwargs["tags"] = tag
     if category:
         kwargs["category"] = category
-    if "magnet" in pending:
-        result = client.torrents_add(urls=pending["magnet"], **kwargs)
-        what = "magnet"
-    else:
-        result = client.torrents_add(torrent_files=pending["file"], **kwargs)
-        what = pending.get("name", ".torrent file")
+
+    def _add():
+        client = qb()
+        if "magnet" in pending:
+            return client.torrents_add(urls=pending["magnet"], **kwargs)
+        return client.torrents_add(torrent_files=pending["file"], **kwargs)
+
+    result = await asyncio.to_thread(_add)
+    what = "magnet" if "magnet" in pending else pending.get("name", ".torrent file")
 
     if result == "Ok.":
         info_hash = None
@@ -505,7 +518,7 @@ async def do_add(
         )
         if info_hash and chat:
             try:
-                add_watch(info_hash, pending.get("name", what), chat.id)
+                add_watch(info_hash, pending.get("name", what), [chat.id])
                 watch_note = "\n🔔 I'll message you when it's downloaded and in place."
             except OSError as e:
                 log.warning("could not register completion watch: %s", e)
@@ -565,12 +578,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "tags":
         await query.answer()
-        await render(*tags_overview(context))
+        await render(*await asyncio.to_thread(tags_overview, context))
         return
 
     if data == "cats":
         await query.answer()
-        await render(*categories_overview(context))
+        await render(*await asyncio.to_thread(categories_overview, context))
         return
 
     action, _, rest = data.partition(":")
@@ -578,25 +591,28 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "l":  # list: l:<filter>:<page>  (filter: a | t<i> | c<i>)
         flt, _, page = rest.partition(":")
         await query.answer()
-        await render(*build_list(context, flt, int(page or 0)))
+        await render(*await asyncio.to_thread(build_list, context, flt, int(page or 0)))
 
     elif action == "t":  # detail
         await query.answer()
-        await render(*build_detail(context, rest))
+        await render(*await asyncio.to_thread(build_detail, context, rest))
 
     elif action in ("p", "r"):  # pause / resume
-        client = qb()
-        if action == "p":
-            client.torrents_pause(torrent_hashes=rest)
-            await query.answer("Paused")
-        else:
-            client.torrents_resume(torrent_hashes=rest)
-            await query.answer("Resumed")
-        await render(*build_detail(context, rest))
+
+        def _toggle_state():
+            client = qb()
+            if action == "p":
+                client.torrents_pause(torrent_hashes=rest)
+            else:
+                client.torrents_resume(torrent_hashes=rest)
+
+        await asyncio.to_thread(_toggle_state)
+        await query.answer("Paused" if action == "p" else "Resumed")
+        await render(*await asyncio.to_thread(build_detail, context, rest))
 
     elif action == "m":  # tag menu
         await query.answer()
-        await render(*build_tag_menu(context, rest))
+        await render(*await asyncio.to_thread(build_tag_menu, context, rest))
 
     elif action == "g":  # toggle tag: g:<hash>:<idx>
         torrent_hash, _, idx = rest.partition(":")
@@ -606,16 +622,19 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("Tag list changed, refreshing…")
         else:
             tag = tags[i]
-            client = qb()
-            t = client.torrents_info(torrent_hashes=torrent_hash)
-            current = {x.strip() for x in t[0].tags.split(",") if x.strip()} if t else set()
-            if tag in current:
-                client.torrents_remove_tags(tags=tag, torrent_hashes=torrent_hash)
-                await query.answer(f"Removed “{tag}”")
-            else:
+
+            def _toggle_tag():
+                client = qb()
+                t = client.torrents_info(torrent_hashes=torrent_hash)
+                current = {x.strip() for x in t[0].tags.split(",") if x.strip()} if t else set()
+                if tag in current:
+                    client.torrents_remove_tags(tags=tag, torrent_hashes=torrent_hash)
+                    return f"Removed “{tag}”"
                 client.torrents_add_tags(tags=tag, torrent_hashes=torrent_hash)
-                await query.answer(f"Added “{tag}”")
-        await render(*build_tag_menu(context, torrent_hash))
+                return f"Added “{tag}”"
+
+            await query.answer(await asyncio.to_thread(_toggle_tag))
+        await render(*await asyncio.to_thread(build_tag_menu, context, torrent_hash))
 
     elif action == "nt":  # new tag for torrent
         context.user_data["awaiting"] = ("new_tag_torrent", rest)
@@ -636,10 +655,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "dc":  # delete confirmed: dc:<hash>:<0|1>
         torrent_hash, _, flag = rest.partition(":")
         with_files = flag == "1"
-        client = qb()
-        t = client.torrents_info(torrent_hashes=torrent_hash)
-        name = t[0].name if t else "torrent"
-        client.torrents_delete(delete_files=with_files, torrent_hashes=torrent_hash)
+
+        def _delete():
+            client = qb()
+            t = client.torrents_info(torrent_hashes=torrent_hash)
+            client.torrents_delete(delete_files=with_files, torrent_hashes=torrent_hash)
+            return t[0].name if t else "torrent"
+
+        name = await asyncio.to_thread(_delete)
         await query.answer("Deleted")
         note = " and its files were deleted" if with_files else " (files kept)"
         await render(
@@ -658,7 +681,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             page = int(rest)
         await query.answer()
-        text, kb = build_search(context, q, cat, page)
+        text, kb = await asyncio.to_thread(build_search, context, q, cat, page)
         await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
     elif action == "sd":  # search result detail with poster + release picker
@@ -743,14 +766,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode=ParseMode.HTML,
             )
             try:
-                groups, _ = hebits_search(entry["query"])
+                groups, _ = await asyncio.to_thread(hebits_search, entry["query"])
                 group = next((g for g in groups if str(g.get("gid")) == arg), None)
                 if group is None:
                     await loading.edit_text(
                         f"Couldn't find “{entry['name']}” on HeBits anymore."
                     )
                     return
-                decorate_local_status([group])
+                await asyncio.to_thread(decorate_local_status, [group])
                 context.user_data["search"] = [group]
                 context.user_data["search_view"] = (entry["query"], "a", 1)
                 await send_detail_card(query.message, group, 0)
@@ -758,6 +781,28 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await loading.edit_text(f"❌ Loading failed: {e}")
                 return
             await loading.delete()
+
+        elif sub == "a":  # toggle ⚡ auto-add for a favorite
+            entry = favorites.get(arg)
+            if not entry:
+                await query.answer("Not in favorites anymore.", show_alert=True)
+            elif entry.get("auto"):
+                entry["auto"] = False
+                save_favorites(favorites)
+                await query.answer("💤 Auto-add off — I'll just notify you.")
+            else:
+                default = load_series_defaults().get(arg)
+                if not default or not default.get("category"):
+                    await query.answer(
+                        "No default for this series yet — add one episode manually "
+                        "and tap 📌 to set it first.",
+                        show_alert=True,
+                    )
+                else:
+                    entry["auto"] = True
+                    save_favorites(favorites)
+                    await query.answer(f"⚡ Auto-add on: {default_label(default)}"[:190])
+            await render(*favorites_overview())
 
         elif sub == "c":  # check all favorites for new episodes right now
             await query.answer("Checking favorites…")
@@ -815,6 +860,17 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif action == "px":  # Plex: px:l = library list, px:s:<key> = scan one, px:a = scan all
         sub, _, key = rest.partition(":")
+        if sub == "aq":  # scan all from a completion ping — keep the message text
+            sections = await asyncio.to_thread(plex_sections)
+            for s in sections:
+                await asyncio.to_thread(plex_refresh, s["key"])
+            plural = "ies" if len(sections) != 1 else "y"
+            await query.answer(f"🔍 Scanning {len(sections)} librar{plural}")
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except BadRequest:
+                pass
+            return
         if sub == "s":
             await asyncio.to_thread(plex_refresh, key)
             await query.answer("🔍 Scan started")
@@ -831,8 +887,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "nf":  # add a release from a new-episode notification
         tid = int(rest)
         await query.answer("Fetching .torrent…")
-        data_bytes = hebits_download(tid)
-        meta = NOTIFIED_META.get(tid, {})
+        data_bytes = await asyncio.to_thread(hebits_download, tid)
+        meta = get_notified(tid)
         name = meta.get("title") or f"HeBits torrent #{tid}"
         context.user_data["pending_add"] = {
             "file": data_bytes,
@@ -860,7 +916,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         res = results[gi]
         t = res["torrents"][ti]
         await query.answer("Fetching .torrent…")
-        data_bytes = hebits_download(t["id"])
+        data_bytes = await asyncio.to_thread(hebits_download, t["id"])
         context.user_data["pending_add"] = {
             "file": data_bytes,
             "name": t["title"],
@@ -891,11 +947,25 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer()
             await query.edit_message_text(
                 f"📄 <b>{html.escape(pending.get('name', ''))}</b>\n{note}Tag it?",
-                reply_markup=build_add_tag_keyboard(context),
+                reply_markup=await asyncio.to_thread(build_add_tag_keyboard, context),
                 parse_mode=ParseMode.HTML,
             )
 
-    elif action == "df":  # save the last add's tag/category as the series default
+    elif action == "df":  # make the last add the series default → ask for resolution
+        info = context.user_data.get("set_default")
+        if not info:
+            await query.answer("Expired — add an episode again first.", show_alert=True)
+            return
+        await query.answer()
+        await query.edit_message_text(
+            f"{query.message.text}\n\n"
+            f"📐 Preferred resolution for “{info['name']}”?\n"
+            "⚡ Auto-add only grabs new episodes in this resolution; anything "
+            "else is offered as a notification instead.",
+            reply_markup=build_resolution_keyboard(),
+        )
+
+    elif action == "dr":  # resolution picked → save the series default
         info = context.user_data.pop("set_default", None)
         if not info:
             await query.answer("Expired — add an episode again first.", show_alert=True)
@@ -905,13 +975,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "name": info["name"],
             "tag": info["tag"],
             "category": info["category"],
+            "resolution": None if rest == "any" else rest,
         }
         save_series_defaults(defaults)
         await query.answer("📌 Default saved")
         await query.edit_message_text(
-            f"{query.message.text}\n"
-            f"📌 Saved — next episodes of this series can be added with "
-            f"{default_label(defaults[info['gid']])} in one tap."
+            f"📌 Default for “{info['name']}”: {default_label(defaults[info['gid']])}.\n"
+            "Next episodes of this series add in one tap — or flip on ⚡ auto-add "
+            "in /fav and I'll grab them for you."
         )
 
     elif action == "at":  # tag choice while adding (step 1 of 2)
@@ -936,7 +1007,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             label = f"🏷 “{tag}”" if tag else "No tag"
             await query.edit_message_text(
                 f"{label}. Now pick a category:",
-                reply_markup=build_add_cat_keyboard(context),
+                reply_markup=await asyncio.to_thread(build_add_cat_keyboard, context),
             )
 
     elif action == "ac":  # category choice while adding (step 2 of 2)

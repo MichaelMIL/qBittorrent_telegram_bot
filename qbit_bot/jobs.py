@@ -1,5 +1,6 @@
-"""Background loops: qBittorrent snapshot refresh, new-episode alerts, and
-download-completion notifications."""
+"""Background loops: qBittorrent snapshot refresh, new-episode alerts (with
+⚡ auto-add for favorites that have a series default), and download-completion
+notifications."""
 
 import asyncio
 import html
@@ -12,17 +13,21 @@ from telegram.constants import ParseMode
 from telegram.ext import Application
 
 from . import config
-from .hebits import HebitsError, hebits_search
+from .hebits import HebitsError, hebits_download, hebits_search
 from .qbit import decorate_local_status, fetch_qbit_torrents, qb
 from .storage import (
+    add_watch,
     load_favorites,
+    load_series_defaults,
     load_watches,
+    record_history,
+    record_notified,
     save_favorites,
     save_watches,
     sleep_interval,
 )
-from .utils import episode_key, episode_tag, fmt_size
-from .views import MAIN_KEYBOARD
+from .utils import episode_key, episode_tag, fmt_size, torrent_info_hash
+from .views import default_label
 
 log = logging.getLogger("qbit-bot")
 
@@ -79,16 +84,21 @@ async def completion_notifier(app: "Application"):
                     f"🏁 <b>{html.escape(t.name)}</b>\n"
                     f"Download complete — files are in their final location.{where}"
                 )
-                try:
-                    # also quietly re-asserts the persistent button bar
-                    await app.bot.send_message(
-                        entry["chat_id"],
-                        text,
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=MAIN_KEYBOARD,
-                    )
-                except Exception as e:
-                    log.warning("completion notification failed: %s", e)
+                kb = InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🎞 Scan Plex now", callback_data="px:aq")]]
+                )
+                # chat_id: pre-chat_ids watch entries from older bot versions
+                recipients = entry.get("chat_ids") or [entry.get("chat_id")]
+                sent = False
+                for chat_id in filter(None, recipients):
+                    try:
+                        await app.bot.send_message(
+                            chat_id, text, parse_mode=ParseMode.HTML, reply_markup=kb
+                        )
+                        sent = True
+                    except Exception as e:
+                        log.warning("completion notification failed: %s", e)
+                if not sent:
                     continue  # keep the watch and retry next cycle
                 log.info("completion announced: %s", t.name)
                 del watches[info_hash]
@@ -97,9 +107,47 @@ async def completion_notifier(app: "Application"):
             save_watches(watches)
 
 
-# metadata of releases we notified about (title, HeBits group id, series
-# name), so the add-button flow can name them and find the series default
-NOTIFIED_META: dict[int, dict] = {}
+def auto_add_new(new: list, default: dict, series: str) -> tuple[list, list]:
+    """Auto-add the best release of each new episode of an ⚡ favorite.
+
+    Only releases matching the series' preferred resolution qualify; an
+    episode not (yet) out in that resolution — or whose add fails — is left
+    for the regular pick-a-version notification. Returns (remaining, added).
+    """
+    by_key: dict[tuple, list[dict]] = {}
+    for k, t in new:
+        by_key.setdefault(k, []).append(t)  # seeders desc within an episode
+    want = default.get("resolution")
+    remaining, added = [], []
+    for k in sorted(by_key, reverse=True):
+        releases = by_key[k]
+        pick = next((t for t in releases if not want or t["resolution"] == want), None)
+        if pick is None:
+            remaining += [(k, t) for t in releases]
+            continue
+        try:
+            data = hebits_download(pick["id"])
+            kwargs = {}
+            if default.get("tag"):
+                kwargs["tags"] = default["tag"]
+            if default.get("category"):
+                kwargs["category"] = default["category"]
+            result = qb().torrents_add(torrent_files=data, **kwargs)
+            if result != "Ok.":
+                raise RuntimeError(f"qBittorrent said {result!r}")
+        except Exception as e:
+            log.warning("auto-add failed for %s: %s", pick["title"], e)
+            remaining += [(k, t) for t in releases]
+            continue
+        log.info("auto-added %s (%s)", pick["title"], series)
+        added.append(pick)
+        try:
+            info_hash = torrent_info_hash(data)
+            record_history(pick["id"], info_hash, pick["title"])
+            add_watch(info_hash, pick["title"], list(config.ALLOWED_USER_IDS))
+        except (ValueError, OSError) as e:
+            log.warning("auto-add bookkeeping failed for %s: %s", pick["title"], e)
+    return remaining, added
 
 
 def collect_new_episodes() -> list[dict]:
@@ -156,6 +204,24 @@ def collect_new_episodes() -> list[dict]:
         entry["last_ep"] = list(current_max)
         changed = True
 
+        # ⚡ favorites: grab qualifying releases outright, announce the rest
+        default = load_series_defaults().get(gid) if entry.get("auto") else None
+        if default:
+            new, added = auto_add_new(new, default, entry["name"])
+            if added:
+                lines = [
+                    f"⚡ <b>{html.escape(entry['name'])}</b> — auto-added with "
+                    f"{default_label(default)}:"
+                ]
+                for t in added:
+                    lines.append(
+                        f"• {episode_tag(t['title'])} · {t['resolution'] or '?'} · "
+                        f"{fmt_size(t['size'])} · 🌱{t['seeders']}"
+                    )
+                notifications.append({"text": "\n".join(lines), "kb": None})
+            if not new:
+                continue
+
         episodes = sorted({episode_tag(t["title"]) for _, t in new}, reverse=True)
         plural = "s" if len(episodes) > 1 else ""
         lines = [
@@ -166,11 +232,9 @@ def collect_new_episodes() -> list[dict]:
         ]
         rows = []
         for k, t in new[:12]:
-            NOTIFIED_META[t["id"]] = {
-                "title": t["title"],
-                "gid": gid,
-                "series": entry["name"],
-            }
+            record_notified(
+                t["id"], {"title": t["title"], "gid": gid, "series": entry["name"]}
+            )
             tech = t["resolution"] or "?"
             marks = "🆓" if t["free"] else ""
             label = (

@@ -1,5 +1,6 @@
 """All message texts and keyboards the bot renders."""
 
+import asyncio
 import html
 import json
 from datetime import datetime, timezone
@@ -185,15 +186,25 @@ def build_add_tag_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboard
 
 
 def default_label(default: dict) -> str:
-    """Human-readable '🏷 tag + 📁 category' summary of a series default."""
+    """Human-readable '🏷 tag + 📁 category + 📐 res' summary of a series default."""
     return " + ".join(
         x
         for x in (
             f"🏷 {default['tag']}" if default.get("tag") else "",
             f"📁 {default['category']}" if default.get("category") else "",
+            f"📐 {default['resolution']}" if default.get("resolution") else "",
         )
         if x
     )
+
+
+RES_CHOICES = ("2160p", "1080p", "720p", "480p")
+
+
+def build_resolution_keyboard() -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(r, callback_data=f"dr:{r}") for r in RES_CHOICES]]
+    rows.append([InlineKeyboardButton("🌐 Any resolution", callback_data="dr:any")])
+    return InlineKeyboardMarkup(rows)
 
 
 def build_use_default_keyboard(default: dict) -> InlineKeyboardMarkup:
@@ -356,7 +367,7 @@ async def send_detail_card(message, res: dict, gi: int) -> None:
         # hand the URL to Telegram: its servers get geo-blocked by hosts
         # like imgur/ibb ("not viewable in your region" placeholders), and
         # tracker-related URLs shouldn't be fetched by third parties at all
-        img = fetch_cover(res["cover"])
+        img = await asyncio.to_thread(fetch_cover, res["cover"])
         if img:
             try:
                 await message.reply_photo(
@@ -380,15 +391,22 @@ def favorites_overview() -> tuple[str, InlineKeyboardMarkup]:
         )
     rows = []
     for gid, entry in sorted(favorites.items(), key=lambda kv: kv[1]["name"].lower()):
-        name = entry["name"] if len(entry["name"]) <= 32 else entry["name"][:31] + "…"
+        name = entry["name"] if len(entry["name"]) <= 24 else entry["name"][:23] + "…"
         rows.append(
             [
                 InlineKeyboardButton(f"⭐ {name}", callback_data=f"fv:o:{gid}"),
+                InlineKeyboardButton(
+                    "⚡" if entry.get("auto") else "💤", callback_data=f"fv:a:{gid}"
+                ),
                 InlineKeyboardButton("🗑", callback_data=f"fv:d:{gid}"),
             ]
         )
     rows.append(footer)
-    return "⭐ <b>Favorites</b> — tap to open:", InlineKeyboardMarkup(rows)
+    text = (
+        "⭐ <b>Favorites</b> — tap to open:\n"
+        "⚡ auto-adds new episodes with the series default · 💤 just notifies"
+    )
+    return text, InlineKeyboardMarkup(rows)
 
 
 RELEASES_PER_PAGE = 10
