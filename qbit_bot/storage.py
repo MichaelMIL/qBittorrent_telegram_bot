@@ -1,4 +1,5 @@
-"""JSON stores: download history, favorites, settings, qBittorrent snapshot."""
+"""JSON stores: download history, favorites, settings, qBittorrent snapshot,
+completion watches, and per-series add defaults."""
 
 import asyncio
 import json
@@ -9,7 +10,9 @@ from .config import (
     FAVORITES_PATH,
     HISTORY_PATH,
     QBIT_CACHE_PATH,
+    SERIES_DEFAULTS_PATH,
     SETTINGS_PATH,
+    WATCH_PATH,
 )
 
 # set when an interval changes so sleeping background loops wake immediately
@@ -66,6 +69,45 @@ def load_favorites() -> dict:
 def save_favorites(favorites: dict) -> None:
     with open(FAVORITES_PATH, "w") as f:
         json.dump(favorites, f, ensure_ascii=False, indent=1)
+
+
+def load_watches() -> dict:
+    """info-hash (str, lowercase) -> {name, chat_id, added} of torrents whose
+    completion should be announced."""
+    try:
+        with open(WATCH_PATH) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_watches(watches: dict) -> None:
+    with open(WATCH_PATH, "w") as f:
+        json.dump(watches, f, ensure_ascii=False, indent=1)
+
+
+def add_watch(info_hash: str, name: str, chat_id: int) -> None:
+    watches = load_watches()
+    watches[info_hash.lower()] = {
+        "name": name,
+        "chat_id": chat_id,
+        "added": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    save_watches(watches)
+
+
+def load_series_defaults() -> dict:
+    """HeBits group id (str) -> {name, tag, category}."""
+    try:
+        with open(SERIES_DEFAULTS_PATH) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_series_defaults(defaults: dict) -> None:
+    with open(SERIES_DEFAULTS_PATH, "w") as f:
+        json.dump(defaults, f, ensure_ascii=False, indent=1)
 
 
 def record_history(hebits_id, info_hash: str, name: str) -> None:

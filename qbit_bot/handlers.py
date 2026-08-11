@@ -21,15 +21,19 @@ from .hebits import (
     hebits_whoami,
     save_hebits_cookie,
 )
-from .jobs import NOTIFIED_TITLES, collect_new_episodes
+from .jobs import NOTIFIED_META, collect_new_episodes
+from .plex import PlexError, plex_refresh, plex_sections
 from .qbit import decorate_local_status, fetch_qbit_torrents, qb
 from .storage import (
+    add_watch,
     load_favorites,
+    load_series_defaults,
     record_history,
     save_favorites,
+    save_series_defaults,
     save_setting,
 )
-from .utils import torrent_info_hash
+from .utils import episode_key, magnet_info_hash, torrent_info_hash
 from .views import (
     MAIN_KEYBOARD,
     back_keyboard,
@@ -39,8 +43,11 @@ from .views import (
     build_list,
     build_search,
     build_tag_menu,
+    build_use_default_keyboard,
     categories_overview,
+    default_label,
     favorites_overview,
+    plex_overview,
     search_detail,
     send_detail_card,
     settings_overview,
@@ -72,7 +79,7 @@ def restricted(func):
             return
         try:
             return await func(update, context)
-        except HebitsError as e:
+        except (HebitsError, PlexError) as e:
             msg = f"❌ {e}"
             if update.callback_query:
                 await update.callback_query.answer(msg[:190], show_alert=True)
@@ -116,7 +123,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⬇️ <b>Adding things</b>\n"
         "Every add walks through a tiny flow: pick a 🏷 <b>tag</b>, then a 📁 "
         "<b>category</b>. That's how your library stays tidy — and how you find "
-        "things again with /tags and /categories.\n"
+        "things again with /tags and /categories. After adding an episode you "
+        "can 📌 make that category the <b>series default</b> — the next episode "
+        "then adds in one tap. And once a download finishes (and its files are "
+        "moved into place), I'll 🔔 ping you here.\n"
         "\n"
         "📚 <b>Managing things</b>\n"
         "/list shows everything in qBittorrent — tap a torrent to pause, resume, "
@@ -163,6 +173,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "\n"
         "<b>Maintenance</b>\n"
         "/settings — status, auto-check intervals &amp; tools\n"
+        "/plex — scan Plex libraries for new files\n"
         "/refresh — re-read the torrent list from qBittorrent\n"
         "/cookie — check or update the HeBits session cookie\n"
         "\n"
@@ -228,6 +239,12 @@ async def cmd_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @restricted
 async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text, kb = settings_overview()
+    await update.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+@restricted
+async def cmd_plex(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text, kb = await asyncio.to_thread(plex_overview)
     await update.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
@@ -323,7 +340,7 @@ async def cmd_cookie(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     popped = [
         context.user_data.pop(key, None)
-        for key in ("pending_add", "add_tag", "awaiting")
+        for key in ("pending_add", "add_tag", "awaiting", "set_default")
     ]
     await update.message.reply_text("Cancelled." if any(popped) else "Nothing to cancel.")
 
@@ -403,6 +420,26 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def start_add_flow(message, context: ContextTypes.DEFAULT_TYPE, title: str):
+    """Kick off the add flow for the pending torrent: offer the series default
+    in one tap when there is one, otherwise start the tag → category flow."""
+    pending = context.user_data.get("pending_add") or {}
+    default = load_series_defaults().get(pending.get("gid") or "")
+    if default:
+        await message.reply_text(
+            f"📄 <b>{html.escape(title)}</b>\n"
+            f"📌 This series has a default: {default_label(default)}. Use it?",
+            reply_markup=build_use_default_keyboard(default),
+            parse_mode=ParseMode.HTML,
+        )
+    else:
+        await message.reply_text(
+            f"📄 <b>{html.escape(title)}</b>\nTag it?",
+            reply_markup=build_add_tag_keyboard(context),
+            parse_mode=ParseMode.HTML,
+        )
+
+
 async def do_add(
     update_or_query,
     context: ContextTypes.DEFAULT_TYPE,
@@ -434,22 +471,65 @@ async def do_add(
         what = pending.get("name", ".torrent file")
 
     if result == "Ok.":
-        if pending.get("hebits_id") and "file" in pending:
+        info_hash = None
+        try:
+            info_hash = (
+                magnet_info_hash(pending["magnet"])
+                if "magnet" in pending
+                else torrent_info_hash(pending["file"])
+            )
+        except (ValueError, OSError) as e:
+            log.warning("could not compute info-hash: %s", e)
+        if pending.get("hebits_id") and "file" in pending and info_hash:
             try:
-                record_history(
-                    pending["hebits_id"],
-                    torrent_info_hash(pending["file"]),
-                    pending.get("name", ""),
-                )
-            except (ValueError, OSError) as e:
+                record_history(pending["hebits_id"], info_hash, pending.get("name", ""))
+            except OSError as e:
                 log.warning("could not record download history: %s", e)
+
+        # watch the torrent so the user is pinged once it's downloaded & moved
+        watch_note = ""
+        chat = (
+            update_or_query.effective_chat
+            if isinstance(update_or_query, Update)
+            else update_or_query.message.chat if update_or_query.message else None
+        )
+        if info_hash and chat:
+            try:
+                add_watch(info_hash, pending.get("name", what), chat.id)
+                watch_note = "\n🔔 I'll message you when it's downloaded and in place."
+            except OSError as e:
+                log.warning("could not register completion watch: %s", e)
+
         parts = []
         if tag:
             parts.append(f"tag “{tag}”")
         if category:
             parts.append(f"category “{category}”")
         suffix = f" with {' and '.join(parts)}" if parts else ""
-        await reply(f"✅ Added {what}{suffix}.")
+
+        # for an episode of a known series, offer to remember this choice
+        kb = None
+        gid = pending.get("gid")
+        if gid and category and episode_key(pending.get("name", "")):
+            existing = load_series_defaults().get(gid)
+            if not existing or (existing.get("category"), existing.get("tag")) != (category, tag):
+                context.user_data["set_default"] = {
+                    "gid": gid,
+                    "name": pending.get("series") or pending.get("name", ""),
+                    "tag": tag,
+                    "category": category,
+                }
+                kb = InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                f"📌 Make 📁 “{category}” this series' default"[:60],
+                                callback_data="df",
+                            )
+                        ]
+                    ]
+                )
+        await reply(f"✅ Added {what}{suffix}.{watch_note}", reply_markup=kb)
     else:
         await reply(f"⚠️ qBittorrent rejected it ({result}). Duplicate torrent?")
 
@@ -723,21 +803,35 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(f"Set to every {hours} h")
             await render(*settings_overview())
 
+    elif action == "px":  # Plex: px:l = library list, px:s:<key> = scan one, px:a = scan all
+        sub, _, key = rest.partition(":")
+        if sub == "s":
+            await asyncio.to_thread(plex_refresh, key)
+            await query.answer("🔍 Scan started")
+        elif sub == "a":
+            sections = await asyncio.to_thread(plex_sections)
+            for s in sections:
+                await asyncio.to_thread(plex_refresh, s["key"])
+            plural = "ies" if len(sections) != 1 else "y"
+            await query.answer(f"🔍 Scanning {len(sections)} librar{plural}")
+        else:
+            await query.answer()
+        await render(*await asyncio.to_thread(plex_overview))
+
     elif action == "nf":  # add a release from a new-episode notification
         tid = int(rest)
         await query.answer("Fetching .torrent…")
         data_bytes = hebits_download(tid)
-        name = NOTIFIED_TITLES.get(tid, f"HeBits torrent #{tid}")
+        meta = NOTIFIED_META.get(tid, {})
+        name = meta.get("title") or f"HeBits torrent #{tid}"
         context.user_data["pending_add"] = {
             "file": data_bytes,
             "name": name,
             "hebits_id": tid,
+            "gid": meta.get("gid"),
+            "series": meta.get("series", ""),
         }
-        await query.message.reply_text(
-            f"📄 <b>{html.escape(name)}</b>\nTag it?",
-            reply_markup=build_add_tag_keyboard(context),
-            parse_mode=ParseMode.HTML,
-        )
+        await start_add_flow(query.message, context, name)
 
     elif action == "sx":  # close a search detail message
         await query.answer()
@@ -753,18 +847,61 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if gi >= len(results) or ti >= len(results[gi]["torrents"]):
             await query.answer("Search results expired — search again.", show_alert=True)
             return
-        t = results[gi]["torrents"][ti]
+        res = results[gi]
+        t = res["torrents"][ti]
         await query.answer("Fetching .torrent…")
         data_bytes = hebits_download(t["id"])
         context.user_data["pending_add"] = {
             "file": data_bytes,
             "name": t["title"],
             "hebits_id": t["id"],
+            "gid": str(res.get("gid") or "") or None,
+            "series": res["name_en"] or res["name_he"] or t["title"],
         }
-        await query.message.reply_text(
-            f"📄 <b>{html.escape(t['title'])}</b>\nTag it?",
-            reply_markup=build_add_tag_keyboard(context),
-            parse_mode=ParseMode.HTML,
+        await start_add_flow(query.message, context, t["title"])
+
+    elif action == "ud":  # series default prompt: y = use, n = manual, f = forget
+        pending = context.user_data.get("pending_add")
+        if not pending:
+            await query.answer("Nothing pending — pick a release again.", show_alert=True)
+            return
+        if rest == "y":
+            default = load_series_defaults().get(pending.get("gid") or "", {})
+            await query.answer()
+            await do_add(query, context, default.get("tag"), default.get("category"))
+        elif rest in ("n", "f"):
+            note = ""
+            if rest == "f":
+                defaults = load_series_defaults()
+                if defaults.pop(pending.get("gid") or "", None) is not None:
+                    save_series_defaults(defaults)
+                note = "🗑 Default forgotten. "
+                await query.answer("Default forgotten")
+            else:
+                await query.answer()
+            await query.edit_message_text(
+                f"📄 <b>{html.escape(pending.get('name', ''))}</b>\n{note}Tag it?",
+                reply_markup=build_add_tag_keyboard(context),
+                parse_mode=ParseMode.HTML,
+            )
+
+    elif action == "df":  # save the last add's tag/category as the series default
+        info = context.user_data.pop("set_default", None)
+        if not info:
+            await query.answer("Expired — add an episode again first.", show_alert=True)
+            return
+        defaults = load_series_defaults()
+        defaults[info["gid"]] = {
+            "name": info["name"],
+            "tag": info["tag"],
+            "category": info["category"],
+        }
+        save_series_defaults(defaults)
+        await query.answer("📌 Default saved")
+        await query.edit_message_text(
+            f"{query.message.text}\n"
+            f"📌 Saved — next episodes of this series can be added with "
+            f"{default_label(defaults[info['gid']])} in one tap."
         )
 
     elif action == "at":  # tag choice while adding (step 1 of 2)

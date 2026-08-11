@@ -11,8 +11,15 @@ from telegram.ext import ContextTypes
 from . import config
 from .config import INTERVAL_CHOICES, PAGE_SIZE, QBIT_CACHE_PATH, SEARCH_RESULTS
 from .hebits import fetch_cover, hebits_search
+from .plex import plex_sections
 from .qbit import decorate_local_status, get_categories, get_tags, qb
-from .storage import load_favorites, load_history, load_settings
+from .storage import (
+    load_favorites,
+    load_history,
+    load_series_defaults,
+    load_settings,
+    load_watches,
+)
 from .utils import (
     STATE_EMOJI,
     episode_tag,
@@ -175,6 +182,36 @@ def build_add_tag_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboard
     )
     rows.append([InlineKeyboardButton("✖️ Cancel", callback_data="at:cancel")])
     return InlineKeyboardMarkup(rows)
+
+
+def default_label(default: dict) -> str:
+    """Human-readable '🏷 tag + 📁 category' summary of a series default."""
+    return " + ".join(
+        x
+        for x in (
+            f"🏷 {default['tag']}" if default.get("tag") else "",
+            f"📁 {default['category']}" if default.get("category") else "",
+        )
+        if x
+    )
+
+
+def build_use_default_keyboard(default: dict) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    f"✅ Use default ({default_label(default)})"[:60],
+                    callback_data="ud:y",
+                )
+            ],
+            [InlineKeyboardButton("🔧 Choose tag & category manually", callback_data="ud:n")],
+            [
+                InlineKeyboardButton("🗑 Forget default", callback_data="ud:f"),
+                InlineKeyboardButton("✖️ Cancel", callback_data="at:cancel"),
+            ],
+        ]
+    )
 
 
 def build_add_cat_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
@@ -468,6 +505,35 @@ def search_detail(
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 
+PLEX_TYPE_EMOJI = {"movie": "🎬", "show": "📺", "artist": "🎵", "photo": "🖼"}
+
+
+def plex_overview() -> tuple[str, InlineKeyboardMarkup]:
+    sections = plex_sections()
+    footer = [
+        InlineKeyboardButton("🔄 Scan all", callback_data="px:a"),
+        InlineKeyboardButton("🔃 Reload", callback_data="px:l"),
+    ]
+    if not sections:
+        return "🎞 <b>Plex</b>\n\nNo libraries found.", InlineKeyboardMarkup([footer])
+    rows = []
+    for s in sections:
+        emoji = PLEX_TYPE_EMOJI.get(s["type"], "📁")
+        state = " · ⏳ scanning…" if s["refreshing"] else ""
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    f"{emoji} {s['title']}{state}"[:60], callback_data=f"px:s:{s['key']}"
+                )
+            ]
+        )
+    rows.append(footer)
+    return (
+        "🎞 <b>Plex libraries</b> — tap one to scan it for new files:",
+        InlineKeyboardMarkup(rows),
+    )
+
+
 def settings_overview(picker: str | None = None) -> tuple[str, InlineKeyboardMarkup]:
     """Status summary + maintenance actions.
 
@@ -491,7 +557,10 @@ def settings_overview(picker: str | None = None) -> tuple[str, InlineKeyboardMar
         f"🗄 qBittorrent snapshot: {snapshot}",
         f"⭐ Favorites: {len(load_favorites())}",
         f"🧾 Bot-added torrents on record: {len(load_history())}",
+        f"🔔 Downloads awaiting completion ping: {len(load_watches())}",
+        f"📌 Series with a default category: {len(load_series_defaults())}",
         f"🍪 HeBits cookie: {'configured' if config.HEBITS_COOKIE else '❗ not set'}",
+        f"🎞 Plex: {config.PLEX_URL} · {'token' if config.PLEX_TOKEN else 'LAN no-auth'}",
         "",
         "⏱ <b>Auto-check intervals</b> — tap to change:",
     ]
@@ -528,6 +597,7 @@ def settings_overview(picker: str | None = None) -> tuple[str, InlineKeyboardMar
     rows += [
         [InlineKeyboardButton("🔄 Refresh qBittorrent list", callback_data="st:q")],
         [InlineKeyboardButton("🆕 Check favorites for episodes", callback_data="st:c")],
+        [InlineKeyboardButton("🎞 Plex libraries", callback_data="px:l")],
         [InlineKeyboardButton("🍪 Validate HeBits cookie", callback_data="st:k")],
         [InlineKeyboardButton("🔃 Reload this view", callback_data="st:r")],
     ]

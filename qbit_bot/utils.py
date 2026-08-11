@@ -1,5 +1,6 @@
 """Formatting helpers, episode parsing, and torrent utilities."""
 
+import base64
 import hashlib
 import re
 
@@ -86,6 +87,20 @@ def torrent_info_hash(data: bytes) -> str:
             return hashlib.sha1(data[i:j]).hexdigest()
         i = j
     raise ValueError("no info dict in torrent")
+
+
+MAGNET_HASH_RE = re.compile(r"xt=urn:btih:([0-9a-fA-F]{40}|[A-Za-z2-7]{32})")
+
+
+def magnet_info_hash(magnet: str) -> str | None:
+    """v1 info-hash (lowercase hex) from a magnet link, or None."""
+    m = MAGNET_HASH_RE.search(magnet)
+    if not m:
+        return None
+    h = m.group(1)
+    if len(h) == 40:
+        return h.lower()
+    return base64.b32decode(h.upper()).hex()  # base32 form of the same hash
 
 
 EPISODE_RE = re.compile(r"[Ss](\d{1,2})[\s._-]?[Ee](\d{1,3})")

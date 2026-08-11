@@ -15,6 +15,14 @@ downloads, star favorite series, and get pinged when a new episode drops.
 - **Add** via search, magnet link, or `.torrent` file — every add walks
   through a tag → category flow (existing, new, or none) to keep the library
   tidy
+- **Completion pings** — every torrent added through the bot is watched in
+  the background; once the download hits 100% *and* qBittorrent has finished
+  moving the files to their final location, the bot messages you (name +
+  category)
+- **Series defaults** — after adding an episode, one tap (📌) remembers its
+  tag + category as the default for that series. Picking any future episode
+  (from search or a new-episode alert) then asks "use the default?" — ✅ adds
+  it instantly, or choose manually / forget the default
 - **Manage** — `/list` shows everything in qBittorrent; tap a torrent to see
   progress/speeds/ETA, pause/resume, toggle tags, or delete it (with or
   without files, always with confirmation). Browse by `/tags` or `/categories`
@@ -29,6 +37,10 @@ downloads, star favorite series, and get pinged when a new episode drops.
   available version; the baseline is the newest episode you actually *have*,
   so an undownloaded episode is offered on the very first check. Each episode
   is announced once
+- **Plex scans** — `/plex` (or the button in `/settings`) lists your Plex
+  libraries with one tap to scan any of them — or all at once — for new
+  files, e.g. right after a completion ping. Works token-less on the LAN
+  via Plex's allowed-without-auth list, or with `PLEX_TOKEN` (see setup)
 - **Settings** — `/settings` shows status (snapshot age, favorites, cookie)
   with maintenance buttons and **configurable intervals** (1–24 h, default
   3 h) for the two background jobs: qBittorrent snapshot refresh and the
@@ -54,12 +66,15 @@ qbit_bot/
   storage.py           JSON stores: history, favorites, settings, snapshot
   qbit.py              qBittorrent client + live status decoration
   hebits.py            HeBits API: search, download, covers, cookie
+  plex.py              Plex API: list libraries, trigger scans
   views.py             message texts and keyboards
-  jobs.py              background loops (snapshot refresh, episode alerts)
+  jobs.py              background loops (snapshot refresh, episode alerts,
+                       completion pings)
   handlers.py          commands, callbacks, add flows
   main.py              application wiring
 data/                  runtime state (git-ignored): history.json,
-                       favorites.json, qbit_cache.json, bot_settings.json
+                       favorites.json, qbit_cache.json, bot_settings.json,
+                       watch.json, series_defaults.json
 ```
 
 ## Setup
@@ -110,6 +125,22 @@ session cookie (the same approach Jackett uses). Two ways to set it:
 session is still valid. Tick *keep me logged in* on the site so it lasts;
 when it expires, error messages say so explicitly.
 
+### 5. Plex (optional, for library scans)
+
+Set `PLEX_URL` in `.env` (default `http://localhost:32400`). For auth, pick
+one:
+
+- **No token (recommended for LAN):** leave `PLEX_TOKEN` empty and add the
+  bot machine's IP to Plex → Settings → Network → *"List of IP addresses and
+  networks that are allowed without auth"* (e.g. `127.0.0.1` when the bot
+  runs on the Plex machine). Nothing can expire. If *Secure connections* is
+  set to **Required**, switch it to **Preferred** so plain-HTTP LAN requests
+  are accepted
+- **Token:** set `PLEX_TOKEN` to the server's own long-lived token — on the
+  Mac running Plex: `defaults read com.plexapp.plexmediaserver
+  PlexOnlineToken`. (Avoid the "View XML" browser token — Plex documents it
+  as temporary)
+
 ## Commands
 
 | Command | What it does |
@@ -121,6 +152,7 @@ when it expires, error messages say so explicitly.
 | `/favorites`, `/fav` | starred series |
 | `/check` | scan favorites for new episodes now |
 | `/settings` | status, intervals & maintenance |
+| `/plex` | scan Plex libraries for new files |
 | `/refresh` | re-read the torrent list from qBittorrent |
 | `/cookie` | check or update the HeBits session |
 | `/cancel` | abort the current flow |

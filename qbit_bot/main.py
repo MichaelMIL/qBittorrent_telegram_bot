@@ -21,6 +21,7 @@ from .handlers import (
     cmd_favorites,
     cmd_help,
     cmd_list,
+    cmd_plex,
     cmd_refresh,
     cmd_search,
     cmd_settings,
@@ -30,7 +31,7 @@ from .handlers import (
     on_document,
     on_text,
 )
-from .jobs import favorites_episode_checker, qbit_cache_refresher
+from .jobs import completion_notifier, favorites_episode_checker, qbit_cache_refresher
 
 log = logging.getLogger("qbit-bot")
 
@@ -43,6 +44,7 @@ def main():
         storage.interval_changed = asyncio.Event()
         app_.create_task(qbit_cache_refresher())
         app_.create_task(favorites_episode_checker(app_))
+        app_.create_task(completion_notifier(app_))
 
     app = (
         Application.builder()
@@ -62,6 +64,7 @@ def main():
     app.add_handler(CommandHandler("check", cmd_check))
     app.add_handler(CommandHandler("refresh", cmd_refresh))
     app.add_handler(CommandHandler("settings", cmd_settings))
+    app.add_handler(CommandHandler("plex", cmd_plex))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.Document.ALL, on_document))

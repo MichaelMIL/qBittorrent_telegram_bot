@@ -28,6 +28,9 @@ HEBITS_URL = "https://hebits.net"
 # mutable: /cookie updates it at runtime via hebits.save_hebits_cookie
 HEBITS_COOKIE = os.environ.get("HEBITS_COOKIE", "").strip()
 
+PLEX_URL = os.environ.get("PLEX_URL", "http://localhost:32400").rstrip("/")
+PLEX_TOKEN = os.environ.get("PLEX_TOKEN", "").strip()
+
 PAGE_SIZE = 8
 SEARCH_RESULTS = 10
 
@@ -45,6 +48,8 @@ HISTORY_PATH = str(DATA_DIR / "history.json")
 FAVORITES_PATH = str(DATA_DIR / "favorites.json")
 QBIT_CACHE_PATH = str(DATA_DIR / "qbit_cache.json")
 SETTINGS_PATH = str(DATA_DIR / "bot_settings.json")
+WATCH_PATH = str(DATA_DIR / "watch.json")
+SERIES_DEFAULTS_PATH = str(DATA_DIR / "series_defaults.json")
 
 logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s %(message)s", level=logging.INFO
