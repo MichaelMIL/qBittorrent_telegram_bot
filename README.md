@@ -46,8 +46,8 @@ downloads, star favorite series, and get pinged when a new episode drops.
   3 h) for the two background jobs: qBittorrent snapshot refresh and the
   episode check. Changes apply immediately and persist
 - **Button bar** — a persistent reply keyboard (📚 List · ⭐ Favorites ·
-  🆕 Check · 🏷 Tags · 📁 Categories · ⚙️ Settings) makes daily use
-  tap-only; typing is needed only for searches and naming new tags
+  🆕 Check · 🏷 Tags · 📁 Categories · 🎞 Plex · ⚙️ Settings) makes daily
+  use tap-only; typing is needed only for searches and naming new tags
 - **Private** — the bot only serves the Telegram user IDs in
   `ALLOWED_USER_IDS`; anyone else gets a rejection message that includes
   their own user id, so adding a trusted person is as easy as having them

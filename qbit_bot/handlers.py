@@ -123,10 +123,18 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⬇️ <b>Adding things</b>\n"
         "Every add walks through a tiny flow: pick a 🏷 <b>tag</b>, then a 📁 "
         "<b>category</b>. That's how your library stays tidy — and how you find "
-        "things again with /tags and /categories. After adding an episode you "
-        "can 📌 make that category the <b>series default</b> — the next episode "
-        "then adds in one tap. And once a download finishes (and its files are "
-        "moved into place), I'll 🔔 ping you here.\n"
+        "things again with /tags and /categories. After adding an episode, one "
+        "tap 📌 saves that choice as the <b>series default</b> — the next "
+        "episode then asks “use the default?” and adds instantly.\n"
+        "\n"
+        "🔔 <b>When it's done</b>\n"
+        "I watch every download I add and message you the moment it's finished "
+        "<i>and</i> the files are moved into place.\n"
+        "\n"
+        "🎞 <b>Plex</b>\n"
+        "/plex (or the 🎞 Plex button) lists your Plex libraries — one tap "
+        "scans a library, or all of them, for new files. Perfect right after "
+        "a download-complete ping.\n"
         "\n"
         "📚 <b>Managing things</b>\n"
         "/list shows everything in qBittorrent — tap a torrent to pause, resume, "
@@ -142,7 +150,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📥 added before, gone now\n"
         "\n"
         "⚙️ <b>/settings</b> — status &amp; maintenance: refresh the qBittorrent "
-        "list, check favorites for episodes, tune the auto-check intervals.\n"
+        "list, check favorites for episodes, scan Plex libraries, tune the "
+        "auto-check intervals.\n"
         "\n"
         "📖 /help — command cheat-sheet\n"
         "🛟 /cancel — bail out of any flow, no questions asked\n"
@@ -383,6 +392,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🆕 Check": cmd_check,
         "🏷 Tags": cmd_tags,
         "📁 Categories": cmd_categories,
+        "🎞 Plex": cmd_plex,
         "⚙️ Settings": cmd_settings,
     }
     if text in button_actions:

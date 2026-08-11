@@ -235,7 +235,8 @@ def build_add_cat_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboard
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
         ["📚 List", "⭐ Favorites", "🆕 Check"],
-        ["🏷 Tags", "📁 Categories", "⚙️ Settings"],
+        ["🏷 Tags", "📁 Categories", "🎞 Plex"],
+        ["⚙️ Settings"],
     ],
     resize_keyboard=True,
     is_persistent=True,
