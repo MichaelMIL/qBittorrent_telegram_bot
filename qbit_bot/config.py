@@ -34,8 +34,17 @@ PLEX_TOKEN = os.environ.get("PLEX_TOKEN", "").strip()
 PAGE_SIZE = 8
 SEARCH_RESULTS = 10
 
-DEFAULT_SETTINGS = {"qbit_refresh_hours": 3, "fav_check_hours": 3}
+DEFAULT_SETTINGS = {
+    "qbit_refresh_hours": 3,
+    "fav_check_hours": 3,
+    "watch_poll_seconds": 30,   # completion-watch polling
+    "stall_alert_hours": 6,     # 0 = stuck-download alerts off
+    "auto_plex_scan": False,    # scan Plex automatically after a download
+    "plex_map": {},             # qBittorrent category -> Plex section key
+}
 INTERVAL_CHOICES = (1, 2, 3, 6, 12, 24)
+WATCH_POLL_CHOICES = (15, 30, 60, 120)
+STALL_ALERT_CHOICES = (0, 3, 6, 12, 24)
 
 # runtime state lives in data/; move any legacy files from the project root
 DATA_DIR.mkdir(exist_ok=True)

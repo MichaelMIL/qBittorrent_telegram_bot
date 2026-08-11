@@ -21,7 +21,7 @@ from .hebits import (
     hebits_whoami,
     save_hebits_cookie,
 )
-from .jobs import collect_new_episodes
+from .jobs import collect_new_episodes, watch_plex_scan
 from .plex import PlexError, plex_refresh, plex_sections
 from .qbit import decorate_local_status, fetch_qbit_torrents, qb
 from .storage import (
@@ -29,10 +29,13 @@ from .storage import (
     get_notified,
     load_favorites,
     load_series_defaults,
+    load_settings,
     record_history,
-    save_favorites,
+    remove_favorite,
     save_series_defaults,
     save_setting,
+    set_favorite,
+    update_favorite,
 )
 from .utils import episode_key, magnet_info_hash, torrent_info_hash
 from .views import (
@@ -49,7 +52,10 @@ from .views import (
     categories_overview,
     default_label,
     favorites_overview,
+    plex_library_picker,
+    plex_map_overview,
     plex_overview,
+    plex_section_label,
     search_detail,
     send_detail_card,
     settings_overview,
@@ -260,6 +266,15 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_plex(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text, kb = await asyncio.to_thread(plex_overview)
     await update.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+async def start_plex_scan(message, context: ContextTypes.DEFAULT_TYPE, targets: list[dict]):
+    """Trigger scans for the given sections, announce them, and watch until done."""
+    for s in targets:
+        await asyncio.to_thread(plex_refresh, s["key"])
+    names = ", ".join(plex_section_label(s) for s in targets)
+    status = await message.reply_text(f"🔍 Plex is scanning {names}…")
+    context.application.create_task(watch_plex_scan(status, targets))
 
 
 async def run_favorites_check(message) -> None:
@@ -727,19 +742,21 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             res = results[gi]
             gid = str(res.get("gid"))
             if gid in favorites:
-                del favorites[gid]
+                remove_favorite(gid)
                 await query.answer("Removed from favorites")
             else:
                 name = res["name_en"] or res["name_he"] or res["torrents"][0]["title"]
                 if res["year"]:
                     name += f" ({res['year']})"
-                favorites[gid] = {
-                    "name": name,
-                    "query": res["name_en"] or res["name_he"],
-                    "added": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                }
+                set_favorite(
+                    gid,
+                    {
+                        "name": name,
+                        "query": res["name_en"] or res["name_he"],
+                        "added": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    },
+                )
                 await query.answer("⭐ Added to favorites")
-            save_favorites(favorites)
             caption, kb = search_detail(res, gi, season=int(season_s), page=int(page_s))
             try:
                 if query.message.photo:
@@ -787,8 +804,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not entry:
                 await query.answer("Not in favorites anymore.", show_alert=True)
             elif entry.get("auto"):
-                entry["auto"] = False
-                save_favorites(favorites)
+                update_favorite(arg, auto=False)
                 await query.answer("💤 Auto-add off — I'll just notify you.")
             else:
                 default = load_series_defaults().get(arg)
@@ -799,8 +815,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         show_alert=True,
                     )
                 else:
-                    entry["auto"] = True
-                    save_favorites(favorites)
+                    update_favorite(arg, auto=True)
                     await query.answer(f"⚡ Auto-add on: {default_label(default)}"[:190])
             await render(*favorites_overview())
 
@@ -809,9 +824,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await run_favorites_check(query.message)
 
         elif sub == "d":  # remove from the favorites list view
-            if arg in favorites:
-                del favorites[arg]
-                save_favorites(favorites)
+            if remove_favorite(arg):
                 await query.answer("Removed")
             else:
                 await query.answer()
@@ -848,41 +861,79 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif rest == "r":  # reload the view
             await query.answer()
             await render(*settings_overview())
-        elif rest in ("iq", "if"):  # expand an interval picker
+        elif rest == "tp":  # toggle auto Plex scan after downloads
+            enabled = not load_settings()["auto_plex_scan"]
+            save_setting("auto_plex_scan", enabled)
+            await query.answer(
+                "🎞 Auto-scan on — I'll scan Plex after every finished download."
+                if enabled
+                else "Auto-scan off — completion pings get a scan button instead."
+            )
+            await render(*settings_overview())
+        elif rest in ("iq", "if", "iw", "is"):  # expand a value picker
             await query.answer()
             await render(*settings_overview(picker=rest[1]))
-        elif rest.startswith("sq:") or rest.startswith("sf:"):  # set an interval
-            kind, _, hours = rest.partition(":")
-            key = "qbit_refresh_hours" if kind == "sq" else "fav_check_hours"
-            save_setting(key, int(hours))
-            await query.answer(f"Set to every {hours} h")
+        elif rest[:2] in ("sq", "sf", "sw", "ss") and rest[2:3] == ":":  # set a value
+            kind, _, raw = rest.partition(":")
+            key, toast = {
+                "sq": ("qbit_refresh_hours", f"Refresh every {raw} h"),
+                "sf": ("fav_check_hours", f"Episode check every {raw} h"),
+                "sw": ("watch_poll_seconds", f"Completion check every {raw} s"),
+                "ss": (
+                    "stall_alert_hours",
+                    f"Stuck alert after {raw} h" if raw != "0" else "Stuck alerts off",
+                ),
+            }[kind]
+            save_setting(key, int(raw))
+            await query.answer(toast)
             await render(*settings_overview())
+
+    elif action == "pm":  # category→library map: pm:l | pm:c:<i> | pm:s:<i>:<key|all>
+        sub, _, arg = rest.partition(":")
+        if sub == "l":
+            await query.answer()
+            await render(*await asyncio.to_thread(plex_map_overview, context))
+        elif sub == "c":
+            await query.answer()
+            await render(*await asyncio.to_thread(plex_library_picker, context, int(arg)))
+        elif sub == "s":
+            i_s, _, key = arg.partition(":")
+            cats = context.bot_data.get("cats", [])
+            i = int(i_s)
+            if i >= len(cats):
+                await query.answer("Category list changed — reloading…")
+            else:
+                plex_map = load_settings()["plex_map"]
+                if key == "all":
+                    plex_map.pop(cats[i], None)
+                else:
+                    plex_map[cats[i]] = key
+                save_setting("plex_map", plex_map)
+                await query.answer("Saved")
+            await render(*await asyncio.to_thread(plex_map_overview, context))
 
     elif action == "px":  # Plex: px:l = library list, px:s:<key> = scan one, px:a = scan all
         sub, _, key = rest.partition(":")
-        if sub == "aq":  # scan all from a completion ping — keep the message text
+        if sub in ("s", "a", "aq"):
             sections = await asyncio.to_thread(plex_sections)
-            for s in sections:
-                await asyncio.to_thread(plex_refresh, s["key"])
-            plural = "ies" if len(sections) != 1 else "y"
-            await query.answer(f"🔍 Scanning {len(sections)} librar{plural}")
-            try:
-                await query.edit_message_reply_markup(reply_markup=None)
-            except BadRequest:
-                pass
-            return
-        if sub == "s":
-            await asyncio.to_thread(plex_refresh, key)
-            await query.answer("🔍 Scan started")
-        elif sub == "a":
-            sections = await asyncio.to_thread(plex_sections)
-            for s in sections:
-                await asyncio.to_thread(plex_refresh, s["key"])
-            plural = "ies" if len(sections) != 1 else "y"
-            await query.answer(f"🔍 Scanning {len(sections)} librar{plural}")
+            targets = sections if sub != "s" else [s for s in sections if s["key"] == key]
+            if not targets:
+                await query.answer("Library not found — reloading…", show_alert=True)
+                await render(*await asyncio.to_thread(plex_overview))
+                return
+            plural = "ies" if len(targets) != 1 else "y"
+            await query.answer(f"🔍 Scanning {len(targets)} librar{plural}")
+            await start_plex_scan(query.message, context, targets)
+            if sub == "aq":  # from a completion ping — keep its text, drop the button
+                try:
+                    await query.edit_message_reply_markup(reply_markup=None)
+                except BadRequest:
+                    pass
+            else:
+                await render(*await asyncio.to_thread(plex_overview))
         else:
             await query.answer()
-        await render(*await asyncio.to_thread(plex_overview))
+            await render(*await asyncio.to_thread(plex_overview))
 
     elif action == "nf":  # add a release from a new-episode notification
         tid = int(rest)

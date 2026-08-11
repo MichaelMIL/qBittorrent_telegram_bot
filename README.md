@@ -18,7 +18,13 @@ downloads, star favorite series, and get pinged when a new episode drops.
 - **Completion pings** — every torrent added through the bot is watched in
   the background; once the download hits 100% *and* qBittorrent has finished
   moving the files to their final location, the bot messages you (name +
-  category) with a 🎞 *Scan Plex now* button right on the message
+  category) with a 🎞 *Scan Plex now* button right on the message. With
+  **auto-scan** on (in `/settings`), the scan starts by itself instead —
+  only the Plex library mapped to the torrent's category (`/settings` →
+  *Category → Plex library map*; unmapped categories scan everything)
+- **Stuck-download alerts** — watched downloads that hit an error state or
+  sit stalled for hours (threshold configurable, or off) trigger a one-time
+  warning instead of silently never finishing
 - **Series defaults** — after adding an episode, one tap (📌) remembers its
   tag + category as the default for that series, then asks for a preferred
   resolution (2160p/1080p/720p/480p/any). Picking any future episode (from
@@ -46,12 +52,16 @@ downloads, star favorite series, and get pinged when a new episode drops.
   is announced once
 - **Plex scans** — `/plex` (or the button in `/settings`) lists your Plex
   libraries with one tap to scan any of them — or all at once — for new
-  files, e.g. right after a completion ping. Works token-less on the LAN
-  via Plex's allowed-without-auth list, or with `PLEX_TOKEN` (see setup)
-- **Settings** — `/settings` shows status (snapshot age, favorites, cookie)
-  with maintenance buttons and **configurable intervals** (1–24 h, default
-  3 h) for the two background jobs: qBittorrent snapshot refresh and the
-  episode check. Changes apply immediately and persist
+  files, e.g. right after a completion ping. Every scan posts a "🔍
+  scanning…" message that flips to "✅ finished (took 41s)" when Plex is
+  done. Works token-less on the LAN via Plex's allowed-without-auth list,
+  or with `PLEX_TOKEN` (see setup)
+- **Settings** — `/settings` shows status (snapshot age, favorites, watched
+  downloads, cookie, Plex) with maintenance buttons and tunables that apply
+  immediately and persist: qBittorrent refresh & episode-check intervals
+  (1–24 h), completion-check frequency (15–120 s), stuck-download alert
+  threshold (off–24 h), the Plex auto-scan toggle, and the category →
+  library map
 - **Button bar** — a persistent reply keyboard (📚 List · ⭐ Favorites ·
   🆕 Check · 🏷 Tags · 📁 Categories · 🎞 Plex · ⚙️ Settings) makes daily
   use tap-only; typing is needed only for searches and naming new tags

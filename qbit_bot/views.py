@@ -10,7 +10,14 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from . import config
-from .config import INTERVAL_CHOICES, PAGE_SIZE, QBIT_CACHE_PATH, SEARCH_RESULTS
+from .config import (
+    INTERVAL_CHOICES,
+    PAGE_SIZE,
+    QBIT_CACHE_PATH,
+    SEARCH_RESULTS,
+    STALL_ALERT_CHOICES,
+    WATCH_POLL_CHOICES,
+)
 from .hebits import fetch_cover, hebits_search
 from .plex import plex_sections
 from .qbit import decorate_local_status, get_categories, get_tags, qb
@@ -527,6 +534,10 @@ def search_detail(
 PLEX_TYPE_EMOJI = {"movie": "🎬", "show": "📺", "artist": "🎵", "photo": "🖼"}
 
 
+def plex_section_label(section: dict) -> str:
+    return f"{PLEX_TYPE_EMOJI.get(section['type'], '📁')} {section['title']}"
+
+
 def plex_overview() -> tuple[str, InlineKeyboardMarkup]:
     sections = plex_sections()
     footer = [
@@ -537,12 +548,11 @@ def plex_overview() -> tuple[str, InlineKeyboardMarkup]:
         return "🎞 <b>Plex</b>\n\nNo libraries found.", InlineKeyboardMarkup([footer])
     rows = []
     for s in sections:
-        emoji = PLEX_TYPE_EMOJI.get(s["type"], "📁")
         state = " · ⏳ scanning…" if s["refreshing"] else ""
         rows.append(
             [
                 InlineKeyboardButton(
-                    f"{emoji} {s['title']}{state}"[:60], callback_data=f"px:s:{s['key']}"
+                    f"{plex_section_label(s)}{state}"[:60], callback_data=f"px:s:{s['key']}"
                 )
             ]
         )
@@ -554,9 +564,9 @@ def plex_overview() -> tuple[str, InlineKeyboardMarkup]:
 
 
 def settings_overview(picker: str | None = None) -> tuple[str, InlineKeyboardMarkup]:
-    """Status summary + maintenance actions.
+    """Status summary + tunable settings + maintenance actions.
 
-    picker: 'q' or 'f' expands an hour-picker row for that interval.
+    picker: 'q'/'f'/'w'/'s' expands the value-picker row for that setting.
     """
     settings = load_settings()
     try:
@@ -576,23 +586,25 @@ def settings_overview(picker: str | None = None) -> tuple[str, InlineKeyboardMar
         f"🗄 qBittorrent snapshot: {snapshot}",
         f"⭐ Favorites: {len(load_favorites())}",
         f"🧾 Bot-added torrents on record: {len(load_history())}",
-        f"🔔 Downloads awaiting completion ping: {len(load_watches())}",
+        f"🔔 Downloads being watched: {len(load_watches())}",
         f"📌 Series with a default category: {len(load_series_defaults())}",
         f"🍪 HeBits cookie: {'configured' if config.HEBITS_COOKIE else '❗ not set'}",
         f"🎞 Plex: {config.PLEX_URL} · {'token' if config.PLEX_TOKEN else 'LAN no-auth'}",
         "",
-        "⏱ <b>Auto-check intervals</b> — tap to change:",
+        "🎛 Tap a setting to change it:",
     ]
 
-    def picker_row(kind: str, current: int) -> list[InlineKeyboardButton]:
+    def picker_row(kind: str, current, choices, fmt) -> list[InlineKeyboardButton]:
         return [
             InlineKeyboardButton(
-                f"•{h}h" if h == current else f"{h}h",
-                callback_data="noop" if h == current else f"st:s{kind}:{h}",
+                f"•{fmt(v)}" if v == current else fmt(v),
+                callback_data="noop" if v == current else f"st:s{kind}:{v}",
             )
-            for h in INTERVAL_CHOICES
+            for v in choices
         ]
 
+    hours = lambda v: f"{v}h"
+    stall_hours = settings["stall_alert_hours"]
     rows = [
         [
             InlineKeyboardButton(
@@ -602,7 +614,7 @@ def settings_overview(picker: str | None = None) -> tuple[str, InlineKeyboardMar
         ]
     ]
     if picker == "q":
-        rows.append(picker_row("q", settings["qbit_refresh_hours"]))
+        rows.append(picker_row("q", settings["qbit_refresh_hours"], INTERVAL_CHOICES, hours))
     rows.append(
         [
             InlineKeyboardButton(
@@ -612,8 +624,43 @@ def settings_overview(picker: str | None = None) -> tuple[str, InlineKeyboardMar
         ]
     )
     if picker == "f":
-        rows.append(picker_row("f", settings["fav_check_hours"]))
+        rows.append(picker_row("f", settings["fav_check_hours"], INTERVAL_CHOICES, hours))
+    rows.append(
+        [
+            InlineKeyboardButton(
+                f"🔔 Completion check: every {settings['watch_poll_seconds']} s",
+                callback_data="st:iw",
+            )
+        ]
+    )
+    if picker == "w":
+        rows.append(
+            picker_row("w", settings["watch_poll_seconds"], WATCH_POLL_CHOICES, lambda v: f"{v}s")
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                "🐌 Stuck-download alert: "
+                + (f"after {stall_hours} h" if stall_hours else "off"),
+                callback_data="st:is",
+            )
+        ]
+    )
+    if picker == "s":
+        rows.append(
+            picker_row(
+                "s", stall_hours, STALL_ALERT_CHOICES, lambda v: f"{v}h" if v else "off"
+            )
+        )
     rows += [
+        [
+            InlineKeyboardButton(
+                "🎞 Auto-scan Plex after downloads: "
+                + ("✅ on" if settings["auto_plex_scan"] else "◻️ off"),
+                callback_data="st:tp",
+            )
+        ],
+        [InlineKeyboardButton("📁→🎞 Category → Plex library map", callback_data="pm:l")],
         [InlineKeyboardButton("🔄 Refresh qBittorrent list", callback_data="st:q")],
         [InlineKeyboardButton("🆕 Check favorites for episodes", callback_data="st:c")],
         [InlineKeyboardButton("🎞 Plex libraries", callback_data="px:l")],
@@ -621,3 +668,50 @@ def settings_overview(picker: str | None = None) -> tuple[str, InlineKeyboardMar
         [InlineKeyboardButton("🔃 Reload this view", callback_data="st:r")],
     ]
     return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+
+def plex_map_overview(context: ContextTypes.DEFAULT_TYPE) -> tuple[str, InlineKeyboardMarkup]:
+    """Per-category Plex scan targets, used by auto-scan after downloads."""
+    cats = get_categories(context)
+    sections = plex_sections()
+    by_key = {s["key"]: s for s in sections}
+    plex_map = load_settings()["plex_map"]
+
+    lines = [
+        "📁→🎞 <b>Category → Plex library</b>",
+        "",
+        "When a download finishes, auto-scan only touches the library its "
+        "category is mapped to (unmapped categories scan everything). "
+        "Tap a category to change its target:",
+    ]
+    rows = []
+    for i, cat in enumerate(cats):
+        target = by_key.get(plex_map.get(cat))
+        label = plex_section_label(target) if target else "🌐 all"
+        rows.append(
+            [InlineKeyboardButton(f"📁 {cat} → {label}"[:60], callback_data=f"pm:c:{i}")]
+        )
+    if not cats:
+        lines.append("\nNo categories defined in qBittorrent yet.")
+    rows.append([InlineKeyboardButton("« Settings", callback_data="st:r")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+
+def plex_library_picker(
+    context: ContextTypes.DEFAULT_TYPE, cat_idx: int
+) -> tuple[str, InlineKeyboardMarkup]:
+    cats = context.bot_data.get("cats", [])
+    if cat_idx >= len(cats):
+        return plex_map_overview(context)  # category cache changed — reload
+    sections = plex_sections()
+    rows = [
+        [InlineKeyboardButton(plex_section_label(s), callback_data=f"pm:s:{cat_idx}:{s['key']}")]
+        for s in sections
+    ]
+    rows.append([InlineKeyboardButton("🌐 All libraries", callback_data=f"pm:s:{cat_idx}:all")])
+    rows.append([InlineKeyboardButton("« Back", callback_data="pm:l")])
+    return (
+        f"📁 <b>{html.escape(cats[cat_idx])}</b> — scan which Plex library "
+        "when one of its downloads finishes?",
+        InlineKeyboardMarkup(rows),
+    )

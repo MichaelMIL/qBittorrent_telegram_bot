@@ -48,6 +48,11 @@ def fmt_eta(seconds: int) -> str:
     return f"{m}m"
 
 
+def fmt_duration(seconds: float) -> str:
+    m, s = divmod(int(seconds), 60)
+    return f"{m}m {s}s" if m else f"{s}s"
+
+
 def progress_bar(fraction: float, width: int = 10) -> str:
     filled = round(fraction * width)
     return "▓" * filled + "░" * (width - filled)
