@@ -214,20 +214,20 @@ async def cmd_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def run_search(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str):
-    # The placeholder re-asserts the persistent button bar (some clients hide
-    # it after typed input). Telegram forbids editing messages sent with a
-    # reply keyboard, so the placeholder is deleted and results sent fresh.
-    msg = await update.message.reply_text(
-        f"🔎 Searching HeBits for “{query}”…", reply_markup=MAIN_KEYBOARD
-    )
+    # NEVER attach the reply keyboard to a message that gets deleted or
+    # edited away: clients tie the button bar to the message that carried it,
+    # so deleting that message hides the bar. The placeholder stays bare and
+    # is edited into the results.
+    msg = await update.message.reply_text(f"🔎 Searching HeBits for “{query}”…")
     try:
         text, kb = build_search(context, query, "a", 1)
-    finally:
+    except Exception:
         try:
             await msg.delete()
         except Exception:
             pass
-    await update.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+        raise  # the restricted() wrapper reports the error
+    await msg.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @restricted
@@ -259,20 +259,17 @@ async def cmd_plex(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def run_favorites_check(message) -> None:
     """Check all favorites for new episodes and report into the chat."""
-    # sent with the reply keyboard, so it must be deleted, not edited
-    loading = await message.reply_text(
-        "⏳ Checking favorites for new episodes…", reply_markup=MAIN_KEYBOARD
-    )
+    # bare placeholder — a deleted message must never carry the reply keyboard
+    loading = await message.reply_text("⏳ Checking favorites for new episodes…")
     try:
         notifications = await asyncio.to_thread(collect_new_episodes)
     except Exception as e:
-        await loading.delete()
-        await message.reply_text(f"❌ Check failed: {e}")
+        await loading.edit_text(f"❌ Check failed: {e}")
+        return
+    if not notifications:
+        await loading.edit_text("✅ No new episodes for your favorites.")
         return
     await loading.delete()
-    if not notifications:
-        await message.reply_text("✅ No new episodes for your favorites.")
-        return
     for note in notifications:
         await message.reply_text(
             note["text"], reply_markup=note["kb"], parse_mode=ParseMode.HTML
@@ -351,7 +348,10 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop(key, None)
         for key in ("pending_add", "add_tag", "awaiting", "set_default")
     ]
-    await update.message.reply_text("Cancelled." if any(popped) else "Nothing to cancel.")
+    await update.message.reply_text(
+        "Cancelled." if any(popped) else "Nothing to cancel.",
+        reply_markup=MAIN_KEYBOARD,
+    )
 
 
 # ------------------------------------------------------------------ adding

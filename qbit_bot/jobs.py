@@ -22,6 +22,7 @@ from .storage import (
     sleep_interval,
 )
 from .utils import episode_key, episode_tag, fmt_size
+from .views import MAIN_KEYBOARD
 
 log = logging.getLogger("qbit-bot")
 
@@ -79,8 +80,12 @@ async def completion_notifier(app: "Application"):
                     f"Download complete — files are in their final location.{where}"
                 )
                 try:
+                    # also quietly re-asserts the persistent button bar
                     await app.bot.send_message(
-                        entry["chat_id"], text, parse_mode=ParseMode.HTML
+                        entry["chat_id"],
+                        text,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=MAIN_KEYBOARD,
                     )
                 except Exception as e:
                     log.warning("completion notification failed: %s", e)
