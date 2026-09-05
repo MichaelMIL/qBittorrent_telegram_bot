@@ -28,7 +28,11 @@ class FakeServer {
 
   /// The `genre` query parameter of each browse request ('' when absent).
   final List<String> browseGenres = [];
-  int browsePages = 3;
+  int browsePages = 1;
+
+  /// Extra single-release groups per browse page (`<Cat> Fill <page>-<k>`),
+  /// to make a page tall enough to scroll.
+  int browseFill = 0;
 
   /// Non-200 makes every browse request fail with [browseDetail].
   int browseStatus = 200;
@@ -347,6 +351,23 @@ class FakeServer {
   /// the titles encode cat + page so every assertion can be an exact
   /// `find.text` and a stale page can never be mistaken for a fresh one.
   List<Map<String, dynamic>> browseGroups(String cat, int page) {
+    final label = cat == 'movies' ? 'Movies' : 'Series';
+    return [
+      ..._baseBrowseGroups(cat, page),
+      for (var k = 0; k < browseFill; k++)
+        <String, dynamic>{
+          ...movie,
+          'gid': 'fill-$cat-$page-$k',
+          'name_en': '$label Fill $page-$k',
+          'name_he': '',
+          'year': '2024',
+          'favorite': false,
+          'torrents': movie['torrents'],
+        },
+    ];
+  }
+
+  List<Map<String, dynamic>> _baseBrowseGroups(String cat, int page) {
     final label = cat == 'movies' ? 'Movies' : 'Series';
     return [
       // A release-less group: the grid must skip it (Group.title would throw).

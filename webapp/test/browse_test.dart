@@ -1,6 +1,7 @@
-// Widget tests for the "🆕 New on HeBits" browse feed: lazy first load,
-// paging (including the stale-response guard), refresh, per-category and
-// per-tab state, error/empty states and the tile → detail round trip.
+// Widget tests for the "🆕 New on HeBits" browse feed: home-screen load,
+// infinite scroll (including the stale-response guard), refresh, genre
+// filter, per-category and per-tab state, error/empty states and the
+// tile → detail round trip.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qbit_web/screens/browse_screen.dart';
@@ -15,14 +16,8 @@ import 'harness.dart';
 Finder inBrowse(Finder finder) =>
     find.descendant(of: find.byType(BrowseScreen), matching: finder);
 
-Finder get prevPage =>
-    inBrowse(find.widgetWithIcon(IconButton, Icons.chevron_left));
-Finder get nextPage =>
-    inBrowse(find.widgetWithIcon(IconButton, Icons.chevron_right));
 Finder get reload => inBrowse(find.byTooltip('Reload'));
-
-bool enabled(WidgetTester tester, Finder button) =>
-    tester.widget<IconButton>(button).onPressed != null;
+Finder get grid => inBrowse(find.byType(CustomScrollView));
 
 /// Boot and log in: Browse is the home screen on every width, so it is on
 /// screen — and loading — as soon as the shell appears.
@@ -33,14 +28,15 @@ Future<AppState> openBrowse(
 }) async {
   final state = await boot(tester, server, size: size);
   await login(tester, state, server);
-  await settle(tester);
+  await settle(tester, 20);
   return state;
 }
 
-/// Go to the next page and wait for it.
-Future<void> tapNext(WidgetTester tester) async {
-  await tester.tap(nextPage);
-  await settle(tester);
+/// Fling the grid towards its end so the load-more trigger fires.
+Future<void> scrollToBottom(WidgetTester tester) async {
+  await tester.drag(grid, const Offset(0, -4000));
+  await tester.pump();
+  await settle(tester, 20);
 }
 
 void main() {
@@ -77,9 +73,7 @@ void main() {
   testWidgets('the rail shows browse first and keeps its content', (
     tester,
   ) async {
-    final state = await boot(tester, server, size: const Size(1200, 800));
-    await login(tester, state, server);
-    await settle(tester);
+    final state = await openBrowse(tester, server);
     expect(server.browseCalls, ['series/1']);
     expectVisible(inBrowse(find.text('Series Top 1 (2015)')));
 
@@ -95,9 +89,7 @@ void main() {
   });
 
   testWidgets('browse and search reach each other on a phone', (tester) async {
-    final state = await boot(tester, server);
-    await login(tester, state, server);
-    await settle(tester);
+    final state = await openBrowse(tester, server, size: const Size(390, 844));
     expectVisible(inBrowse(find.text('🆕 New on HeBits')));
 
     await tester.tap(find.byTooltip('Search HeBits'));
@@ -113,9 +105,8 @@ void main() {
     await finish(tester, state);
   });
 
-  testWidgets('genre filter: pick Comedy, page resets, title shows it, clear', (
-    tester,
-  ) async {
+  testWidgets('genre filter: pick Comedy, feed restarts, title shows it, '
+      'clear', (tester) async {
     final state = await openBrowse(tester, server);
     expect(server.browseGenres, ['']);
 
@@ -124,16 +115,16 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400)); // sheet animation
     expectVisible(find.text('All genres'));
     await tester.tap(find.text('Comedy'));
-    await settle(tester);
+    await settle(tester, 20);
     expect(server.browseGenres.last, 'קומדיה');
-    expect(server.browseCalls.last, 'series/1');
+    expect(server.browseCalls.last, 'series/1'); // from the top again
     expectVisible(inBrowse(find.text('🆕 Comedy')));
 
     await tester.tap(find.byTooltip('Filter by genre'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await tester.tap(find.text('All genres'));
-    await settle(tester);
+    await settle(tester, 20);
     expect(server.browseGenres.last, '');
     expectVisible(inBrowse(find.text('🆕 New on HeBits')));
 
@@ -162,86 +153,105 @@ void main() {
     await finish(tester, state);
   });
 
-  testWidgets('the pager walks pages and disables both ends', (tester) async {
-    final state = await openBrowse(tester, server);
-    expectVisible(inBrowse(find.text('1 / 3')));
-    expect(enabled(tester, prevPage), isFalse); // nothing before page 1
-    expect(enabled(tester, nextPage), isTrue);
-
-    await tapNext(tester);
-    expect(server.browseCalls, ['series/1', 'series/2']);
-    expectVisible(inBrowse(find.text('2 / 3')));
-    expectVisible(inBrowse(find.text('Series Top 2 (2015)')));
-    expect(inBrowse(find.text('Series Top 1 (2015)')), findsNothing);
-    expect(enabled(tester, prevPage), isTrue);
-
-    await tapNext(tester);
-    expectVisible(inBrowse(find.text('3 / 3')));
-    expectVisible(inBrowse(find.text('Series Top 3 (2015)')));
-    expect(enabled(tester, nextPage), isFalse); // last page
-
-    await tester.tap(prevPage);
-    await settle(tester);
-    expect(server.browseCalls, [
-      'series/1',
-      'series/2',
-      'series/3',
-      'series/2',
-    ]);
-    expectVisible(inBrowse(find.text('2 / 3')));
-
-    await finish(tester, state);
-  });
-
-  testWidgets('a superseded page response is dropped', (tester) async {
-    // page 2 crawls, page 3 is instant → the responses arrive out of order
-    server.browseDelay['series/2'] = const Duration(milliseconds: 600);
-    final state = await openBrowse(tester, server);
-
-    await tester.tap(nextPage); // asks for page 2
-    await tester.pump();
-    // the pager tracks the requested page, not the loaded one
-    expectVisible(inBrowse(find.text('2 / 3')));
-    await tester.tap(nextPage); // asks for page 3 before 2 lands
-    await settle(tester, 40);
-
-    expect(server.browseCalls, ['series/1', 'series/2', 'series/3']);
-    expectVisible(inBrowse(find.text('3 / 3')));
-    expectVisible(inBrowse(find.text('Series Top 3 (2015)')));
-    expect(inBrowse(find.text('Series Top 2 (2015)')), findsNothing);
-    expect(inBrowse(find.text('Series Top 1 (2015)')), findsNothing);
-
-    await finish(tester, state);
-  });
-
-  testWidgets('reload refetches the page being viewed, grid stays put', (
+  testWidgets('short pages keep loading until the feed is full', (
     tester,
   ) async {
+    server.browsePages = 3; // two tiles per page never fill a 1200x800 window
     final state = await openBrowse(tester, server);
-    await tapNext(tester);
+
+    expect(server.browseCalls, ['series/1', 'series/2', 'series/3']);
+    expectVisible(inBrowse(find.text('Series Top 1 (2015)')));
+    expectVisible(inBrowse(find.text('Series Top 3 (2015)')));
+    expectVisible(inBrowse(find.text("That's everything — 6 titles.")));
+    expectVisible(inBrowse(find.text('6 titles · all')));
+
+    await finish(tester, state);
+  });
+
+  testWidgets('scrolling near the bottom loads the next page and appends', (
+    tester,
+  ) async {
+    server
+      ..browsePages = 3
+      ..browseFill = 30; // 32 tiles per page → the grid scrolls
+    final state = await openBrowse(tester, server);
+    expect(server.browseCalls, ['series/1']);
+    expectVisible(inBrowse(find.text('32 titles')));
+
+    await scrollToBottom(tester);
     expect(server.browseCalls, ['series/1', 'series/2']);
+    // appended, not replaced: the counter covers both pages (tiles that were
+    // scrolled away are unbuilt by the lazy grid, so count, don't find them)
+    expectVisible(inBrowse(find.text('64 titles')));
+
+    await scrollToBottom(tester);
+    expect(server.browseCalls, ['series/1', 'series/2', 'series/3']);
+    await scrollToBottom(tester);
+    expect(server.browseCalls, ['series/1', 'series/2', 'series/3']); // done
+    expect(
+      find.text("That's everything — 96 titles.", skipOffstage: false),
+      findsOneWidget,
+    );
+
+    await finish(tester, state);
+  });
+
+  testWidgets('a superseded response is dropped', (tester) async {
+    // page 2 crawls; a reload (page 1) is answered first → page 2 must be
+    // ignored when it finally lands
+    server
+      ..browsePages = 3
+      ..browseFill = 30
+      ..browseDelay['series/2'] = const Duration(milliseconds: 600);
+    final state = await openBrowse(tester, server);
+
+    await tester.drag(grid, const Offset(0, -4000));
+    await tester.pump(); // asks for page 2
+    await tester.tap(reload); // asks for page 1 before 2 lands
+    await settle(tester, 40);
+
+    expect(server.browseCalls, ['series/1', 'series/2', 'series/1']);
+    expect(
+      find.text('Series Top 2 (2015)', skipOffstage: false),
+      findsNothing,
+    );
+    expect(
+      find.text('Series Top 1 (2015)', skipOffstage: false),
+      findsOneWidget,
+    );
+
+    await finish(tester, state);
+  });
+
+  testWidgets('reload starts over from page 1', (tester) async {
+    server.browsePages = 3;
+    final state = await openBrowse(tester, server);
+    expect(server.browseCalls, ['series/1', 'series/2', 'series/3']);
 
     await tester.tap(reload);
     await tester.pump();
     // the grid keeps rendering; only the app bar shows the spinner
-    expectVisible(inBrowse(find.text('Series Top 2 (2015)')));
+    expectVisible(inBrowse(find.text('Series Top 1 (2015)')));
     expect(inBrowse(find.byType(CircularProgressIndicator)), findsOneWidget);
-    await settle(tester);
+    await settle(tester, 20);
 
-    expect(server.browseCalls, ['series/1', 'series/2', 'series/2']);
-    expect(server.browseCalls.last, 'series/2'); // not back to page 1
-    expectVisible(inBrowse(find.text('2 / 3')));
-    expectVisible(inBrowse(find.text('Series Top 2 (2015)')));
+    expect(server.browseCalls, [
+      'series/1',
+      'series/2',
+      'series/3',
+      'series/1',
+      'series/2',
+      'series/3',
+    ]);
+    expectVisible(inBrowse(find.text('Series Top 3 (2015)')));
 
     await finish(tester, state);
   });
 
-  testWidgets('pull to refresh reloads the page being viewed', (tester) async {
+  testWidgets('pull to refresh starts over from page 1', (tester) async {
     final state = await openBrowse(tester, server);
-    await tapNext(tester);
 
-    final grid = tester.getCenter(inBrowse(find.byType(GridView)));
-    final drag = await tester.startGesture(grid);
+    final drag = await tester.startGesture(tester.getCenter(grid));
     for (var i = 0; i < 8; i++) {
       await drag.moveBy(const Offset(0, 50));
       await tester.pump();
@@ -253,50 +263,67 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     await settle(tester, 20);
 
-    expect(server.browseCalls, ['series/1', 'series/2', 'series/2']);
-    expectVisible(inBrowse(find.text('Series Top 2 (2015)')));
-    expectVisible(inBrowse(find.text('2 / 3')));
+    expect(server.browseCalls, ['series/1', 'series/1']);
+    expectVisible(inBrowse(find.text('Series Top 1 (2015)')));
 
     await finish(tester, state);
   });
 
-  testWidgets('a failed page shows the server detail and retries the same '
-      'page', (tester) async {
-    final state = await openBrowse(tester, server);
-    await tapNext(tester);
-
+  testWidgets('a failed first load shows the server detail and retries', (
+    tester,
+  ) async {
     server.browseStatus = 502;
-    await tester.tap(reload);
-    await settle(tester);
+    final state = await openBrowse(tester, server);
     expectVisible(inBrowse(find.text(server.browseDetail)));
-    expect(inBrowse(find.text('Series Top 2 (2015)')), findsNothing);
     expect(inBrowse(find.text('Retry')), findsOneWidget);
 
     await tester.tap(inBrowse(find.text('Retry')));
     await settle(tester);
-    expect(server.browseCalls, [
-      'series/1',
-      'series/2',
-      'series/2',
-      'series/2', // retry reuses cat + page
-    ]);
+    expect(server.browseCalls, ['series/1', 'series/1']);
     expectVisible(inBrowse(find.text(server.browseDetail)));
 
     server.browseStatus = 200;
     await tester.tap(inBrowse(find.text('Retry')));
     await settle(tester);
-    expect(server.browseCalls.last, 'series/2');
-    expectVisible(inBrowse(find.text('Series Top 2 (2015)')));
+    expectVisible(inBrowse(find.text('Series Top 1 (2015)')));
     expect(inBrowse(find.text(server.browseDetail)), findsNothing);
 
     await finish(tester, state);
   });
 
-  testWidgets('an empty page offers a reload', (tester) async {
+  testWidgets('a failed next page shows the error in the footer with a retry', (
+    tester,
+  ) async {
+    server
+      ..browsePages = 2
+      ..browseFill = 30;
+    final state = await openBrowse(tester, server);
+    expect(server.browseCalls, ['series/1']);
+
+    server.browseStatus = 502;
+    await scrollToBottom(tester);
+    expect(server.browseCalls, ['series/1', 'series/2']);
+    expectVisible(inBrowse(find.text(server.browseDetail)));
+    // page 1 is kept; the error lives under the grid
+    expectVisible(inBrowse(find.text('32 titles')));
+
+    server.browseStatus = 200;
+    await tester.tap(inBrowse(find.text('Retry')));
+    await settle(tester, 20);
+    expect(server.browseCalls, ['series/1', 'series/2', 'series/2']);
+    expect(
+      find.text("That's everything — 64 titles.", skipOffstage: false),
+      findsOneWidget,
+    );
+
+    await finish(tester, state);
+  });
+
+  testWidgets('an empty feed offers a reload', (tester) async {
     server.browseEmpty = true;
     final state = await openBrowse(tester, server);
 
-    expectVisible(inBrowse(find.text('HeBits had nothing new on page 1.')));
+    expectVisible(inBrowse(find.text('HeBits had nothing new here.')));
     expect(inBrowse(find.text('Reload')), findsOneWidget);
     expect(inBrowse(find.text('Retry')), findsNothing);
 
@@ -323,17 +350,22 @@ void main() {
     await finish(tester, state);
   });
 
-  testWidgets('each category keeps its own page and groups', (tester) async {
+  testWidgets('each category keeps its own feed', (tester) async {
+    server.browsePages = 2;
     final state = await openBrowse(tester, server);
-    await tapNext(tester); // series is on page 2
+    expect(server.browseCalls, ['series/1', 'series/2']);
 
     await tester.tap(inBrowse(find.text('Movies')));
-    await settle(tester);
-    expect(server.browseCalls, ['series/1', 'series/2', 'movies/1']);
+    await settle(tester, 20);
+    expect(server.browseCalls, [
+      'series/1',
+      'series/2',
+      'movies/1',
+      'movies/2',
+    ]);
     expectVisible(inBrowse(find.text('Movies Top 1 (2015)')));
-    expectVisible(inBrowse(find.text('1 / 3')));
     expectNotVisible(find.text('Series Top 2 (2015)'));
-    // the series grid is only hidden — its page and groups are still there
+    // the series grid is only hidden — its groups are still there
     expect(
       find.text('Series Top 2 (2015)', skipOffstage: false),
       findsOneWidget,
@@ -341,40 +373,28 @@ void main() {
 
     await tester.tap(inBrowse(find.text('Series')));
     await settle(tester);
-    expect(server.browseCalls, [
-      'series/1',
-      'series/2',
-      'movies/1',
-    ]); // no refetch
+    expect(server.browseCalls.length, 4); // no refetch
     expectVisible(inBrowse(find.text('Series Top 2 (2015)')));
-    expectVisible(inBrowse(find.text('2 / 3')));
     expectNotVisible(find.text('Movies Top 1 (2015)'));
-    expect(
-      find.text('Movies Top 1 (2015)', skipOffstage: false),
-      findsOneWidget,
-    );
 
     await finish(tester, state);
   });
 
   testWidgets('leaving and re-entering the tab keeps the feed', (tester) async {
     final state = await openBrowse(tester, server);
-    await tapNext(tester);
 
     await tester.tap(find.text('Library'));
     await settle(tester);
-    expectNotVisible(find.text('Series Top 2 (2015)'));
-    // still mounted with its page-2 groups, just not on screen
+    expectNotVisible(find.text('Series Top 1 (2015)'));
     expect(
-      find.text('Series Top 2 (2015)', skipOffstage: false),
+      find.text('Series Top 1 (2015)', skipOffstage: false),
       findsOneWidget,
     );
 
     await tester.tap(find.text('Browse'));
     await settle(tester);
-    expect(server.browseCalls, ['series/1', 'series/2']); // no refetch
-    expectVisible(inBrowse(find.text('Series Top 2 (2015)')));
-    expectVisible(inBrowse(find.text('2 / 3')));
+    expect(server.browseCalls, ['series/1']); // no refetch
+    expectVisible(inBrowse(find.text('Series Top 1 (2015)')));
 
     await finish(tester, state);
   });
@@ -410,7 +430,7 @@ void main() {
     ) async {
       server.browseEmpty = true;
       final state = await openBrowse(tester, server, size: size);
-      expectVisible(inBrowse(find.text('HeBits had nothing new on page 1.')));
+      expectVisible(inBrowse(find.text('HeBits had nothing new here.')));
       expect(tester.takeException(), isNull);
 
       server
@@ -421,12 +441,16 @@ void main() {
       expectVisible(inBrowse(find.text(server.browseDetail)));
       expect(tester.takeException(), isNull);
 
-      server.browseStatus = 200;
+      server
+        ..browseStatus = 200
+        ..browsePages = 2;
       await tester.tap(inBrowse(find.text('Retry')));
-      await settle(tester);
+      await settle(tester, 20);
       expectVisible(inBrowse(find.text('Series Top 1 (2015)')));
-      await tapNext(tester);
-      expectVisible(inBrowse(find.text('Series Top 2 (2015)')));
+      expect(
+        find.text("That's everything — 4 titles.", skipOffstage: false),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
 
       await finish(tester, state);

@@ -4,12 +4,17 @@ import 'package:qbit_web/screens/group_screen.dart';
 import 'package:qbit_web/widgets/common.dart';
 
 /// Poster tiles, one per HeBits group. Shared by search and browse.
+///
+/// Built on a [CustomScrollView] so a [footer] (a "loading more" spinner or
+/// an end-of-feed note) can sit under the grid and scroll with it.
 class GroupGrid extends StatelessWidget {
   const GroupGrid({
     required this.groups,
     required this.onChanged,
     super.key,
     this.physics,
+    this.footer,
+    this.controller,
   });
   final List<Group> groups;
 
@@ -20,6 +25,10 @@ class GroupGrid extends StatelessWidget {
   /// even when a page is short enough not to scroll.
   final ScrollPhysics? physics;
 
+  /// Rendered below the last row (infinite-scroll status).
+  final Widget? footer;
+  final ScrollController? controller;
+
   @override
   Widget build(BuildContext context) {
     // Group.title reads torrents.first, so a release-less group would throw.
@@ -27,27 +36,42 @@ class GroupGrid extends StatelessWidget {
       for (final g in groups)
         if (g.torrents.isNotEmpty) g,
     ];
-    return GridView.builder(
+    return CustomScrollView(
+      controller: controller,
       physics: physics,
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 88),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 190,
-        mainAxisExtent: 320,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-      ),
-      itemCount: items.length,
-      itemBuilder: (ctx, i) => GroupTile(
-        group: items[i],
-        onTap: () async {
-          await Navigator.of(ctx).push(
-            MaterialPageRoute<void>(
-              builder: (_) => GroupScreen(group: items[i]),
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+          sliver: SliverGrid(
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 190,
+              mainAxisExtent: 320,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
             ),
-          );
-          onChanged(); // favorite / default may have changed
-        },
-      ),
+            delegate: SliverChildBuilderDelegate(
+              (ctx, i) => GroupTile(
+                group: items[i],
+                onTap: () async {
+                  await Navigator.of(ctx).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => GroupScreen(group: items[i]),
+                    ),
+                  );
+                  onChanged(); // favorite / default may have changed
+                },
+              ),
+              childCount: items.length,
+            ),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 88),
+            child: footer,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -74,7 +98,8 @@ class GroupTile extends StatelessWidget {
     } else {
       final reso = group.resolutions.join('/');
       detail =
-          '${ts.length} releases${reso.isEmpty ? '' : ' ($reso)'} · 🌱 ${group.totalSeeders}';
+          '${ts.length} releases${reso.isEmpty ? '' : ' ($reso)'} · '
+          '🌱 ${group.totalSeeders}';
     }
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -108,14 +133,13 @@ class GroupTile extends StatelessWidget {
                     Positioned(
                       right: 6,
                       top: 6,
-                      child: Mark(group.auto ? '⭐⚡' : '⭐', tooltip: 'Favorite'),
+                      child: Mark(
+                        group.auto ? '⭐⚡' : '⭐',
+                        tooltip: 'Favorite',
+                      ),
                     ),
                   if (group.cat.isNotEmpty)
-                    Positioned(
-                      left: 6,
-                      bottom: 6,
-                      child: Mark(group.cat),
-                    ),
+                    Positioned(left: 6, bottom: 6, child: Mark(group.cat)),
                 ],
               ),
             ),

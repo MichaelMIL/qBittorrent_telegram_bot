@@ -186,7 +186,7 @@ void main() {
     await tester.tap(find.text('Unlock'));
     await settle(tester);
     expectVisible(find.text('7 posters · 120.6 KiB on disk'));
-    expectVisible(find.text('limit 1.0 GiB · cleared every 7 d'));
+    expectVisible(find.text('limit 1.00 GiB · cleared every 7 d'));
 
     await tester.tap(find.text('Clear cache'));
     await settle(tester, 20);
