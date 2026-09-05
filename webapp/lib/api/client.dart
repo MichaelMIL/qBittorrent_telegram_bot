@@ -13,6 +13,9 @@ class ApiException implements Exception {
 
   bool get unauthorized => status == 401;
 
+  /// Settings are locked (403): the settings token is missing or stale.
+  bool get settingsLocked => status == 403;
+
   @override
   String toString() => message;
 }
@@ -23,6 +26,10 @@ class ApiClient {
 
   String baseUrl;
   String token;
+
+  /// Second factor for the Settings tab (from POST /api/settings/unlock);
+  /// kept in memory only, so a reload locks settings again.
+  String settingsToken = '';
   final http.Client _http = http.Client();
 
   Uri _uri(String path, [Map<String, String?>? query]) {
@@ -38,6 +45,7 @@ class ApiClient {
   Map<String, String> get _headers => {
     'Accept': 'application/json',
     if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+    if (settingsToken.isNotEmpty) 'X-Settings-Token': settingsToken,
   };
 
   Future<Json> get(String path, [Map<String, String?>? query]) =>

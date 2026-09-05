@@ -166,6 +166,49 @@ void main() {
     await finish(tester, state);
   });
 
+  testWidgets('settings lock: unlock with the password, clear cache, relock', (
+    tester,
+  ) async {
+    server.settingsLocked = true;
+    final state = await boot(tester, server, size: const Size(390, 1500));
+    await login(tester, state, server);
+    await tester.tap(find.text('Settings'));
+    await settle(tester);
+    expectVisible(find.text('Settings are locked'));
+    expect(find.text('Auto-scan Plex after downloads'), findsNothing);
+
+    await tester.enterText(find.byType(TextField).last, 'nope');
+    await tester.tap(find.text('Unlock'));
+    await settle(tester);
+    expectVisible(find.text('Wrong settings password'));
+
+    await tester.enterText(find.byType(TextField).last, 'lock');
+    await tester.tap(find.text('Unlock'));
+    await settle(tester);
+    expectVisible(find.text('7 posters · 120.6 KiB in memory'));
+
+    await tester.tap(find.text('Clear cache'));
+    await settle(tester, 20);
+    expect(server.cacheClears, 1);
+    expectVisible(find.textContaining('Cache cleared — 7 posters'));
+
+    // the server would refuse a change without the token; with it, it works
+    await tester.pump(const Duration(seconds: 6)); // snackbar out of the way
+    await tester.pump(const Duration(seconds: 1));
+    await tester.scrollUntilVisible(
+      find.text('Auto-scan Plex after downloads'),
+      200,
+    );
+    await tester.tap(find.text('Auto-scan Plex after downloads'));
+    await settle(tester);
+    expect(server.settings['auto_plex_scan'], isTrue);
+
+    await tester.tap(find.byTooltip('Lock settings'));
+    await tester.pump();
+    expectVisible(find.text('Settings are locked'));
+    await finish(tester, state);
+  });
+
   testWidgets(
     'wide layout uses a rail with Plex; Plex screen lists libraries',
     (tester) async {

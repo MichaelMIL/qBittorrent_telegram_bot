@@ -13,6 +13,7 @@ class AppState extends ChangeNotifier {
   final ApiClient api;
   bool ready = false; // prefs loaded, first /api/auth attempt done
   bool authRequired = false;
+  bool settingsLocked = false; // server has SETTINGS_PASSWORD set
   bool connected = false; // server reachable and (if needed) logged in
   String? connectError;
   Status? status;
@@ -46,6 +47,8 @@ class AppState extends ChangeNotifier {
     try {
       final auth = await api.get('/api/auth');
       authRequired = auth['required'] == true;
+      settingsLocked = auth['settings_locked'] == true;
+      if (!settingsLocked) api.settingsToken = '';
       if (!authRequired) api.token = '';
       // /api/status also validates the token
       status = Status.fromJson(await api.get('/api/status'));
@@ -74,8 +77,23 @@ class AppState extends ChangeNotifier {
     await connect();
   }
 
+  /// Whether the Settings tab may be shown right now.
+  bool get settingsUnlocked => !settingsLocked || api.settingsToken.isNotEmpty;
+
+  Future<void> unlockSettings(String password) async {
+    final res = await api.post('/api/settings/unlock', {'password': password});
+    api.settingsToken = '${res['token'] ?? ''}';
+    notifyListeners();
+  }
+
+  void lockSettings() {
+    api.settingsToken = '';
+    notifyListeners();
+  }
+
   Future<void> logout() async {
     api.token = '';
+    api.settingsToken = '';
     connected = false;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('token');

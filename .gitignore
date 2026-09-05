@@ -3,7 +3,11 @@
 __pycache__/
 *.pyc
 data/
-webapp/build/
+# the Flutter web bundle IS committed so `git pull` deploys it to hosts without
+# Flutter (the Ubuntu box); CanvasKit is loaded from Google's CDN, not shipped
+webapp/build/*
+!webapp/build/web/
+webapp/build/web/canvaskit/
 webapp/.dart_tool/
 webapp/.flutter-plugins*
 webapp/*.iml

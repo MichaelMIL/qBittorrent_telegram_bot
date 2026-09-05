@@ -61,20 +61,45 @@ def main():
     if not config.ALLOWED_USER_IDS:
         raise SystemExit("Set ALLOWED_USER_IDS in .env — the bot must not be open to everyone.")
 
+    # background work owned by the bot: the three job loops and (optionally)
+    # the web server. Started once the application is initialized, stopped —
+    # and awaited — when it stops, so shutdown leaves no pending tasks behind.
+    tasks: list[asyncio.Task] = []
+    web: dict = {}
+
     async def start_background_jobs(app_: Application):
         storage.interval_changed = asyncio.Event()
-        app_.create_task(qbit_cache_refresher())
-        app_.create_task(favorites_episode_checker(app_))
-        app_.create_task(completion_notifier(app_))
+        loop = asyncio.get_running_loop()
+        tasks[:] = [
+            loop.create_task(qbit_cache_refresher(), name="qbit-cache-refresher"),
+            loop.create_task(favorites_episode_checker(app_), name="episode-checker"),
+            loop.create_task(completion_notifier(app_), name="completion-notifier"),
+        ]
         if config.WEB_ENABLED:
-            from qbit_web.server import serve_in_loop
+            from qbit_web.server import make_server
 
-            app_.create_task(serve_in_loop())
+            web["server"] = make_server()
+            web["task"] = loop.create_task(web["server"].serve(), name="web-server")
+
+    async def stop_background_jobs(app_: Application):
+        for t in tasks:
+            t.cancel()
+        pending = list(tasks)
+        if web:
+            web["server"].should_exit = True  # graceful: finishes the lifespan
+            pending.append(web["task"])
+        try:
+            await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), 10)
+        except asyncio.TimeoutError:
+            log.warning("background tasks did not stop within 10 s")
+        tasks.clear()
+        web.clear()
 
     app = (
         Application.builder()
         .token(config.BOT_TOKEN)
         .post_init(start_background_jobs)
+        .post_stop(stop_background_jobs)
         .build()
     )
     app.add_handler(CommandHandler("start", cmd_start))

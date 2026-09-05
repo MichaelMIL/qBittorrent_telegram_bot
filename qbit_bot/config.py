@@ -36,6 +36,10 @@ WEB_ENABLED = os.environ.get("WEB_ENABLED", "1").strip().lower() not in ("0", "f
 WEB_HOST = os.environ.get("WEB_HOST", "0.0.0.0").strip()
 WEB_PORT = int(os.environ.get("WEB_PORT", "8765"))
 WEB_PASSWORD = os.environ.get("WEB_PASSWORD", "").strip()  # empty = no login
+# second password just for the web app's Settings tab (empty = settings open)
+SETTINGS_PASSWORD = os.environ.get("SETTINGS_PASSWORD", "").strip()
+# the server's in-memory poster cache is dropped this often (0 = never)
+CACHE_CLEAR_HOURS = float(os.environ.get("CACHE_CLEAR_HOURS", "24") or 0)
 WEB_BUILD_DIR = BASE_DIR / "webapp" / "build" / "web"
 
 PAGE_SIZE = 8

@@ -74,6 +74,24 @@ def auth_required() -> bool:
     return bool(config.WEB_PASSWORD)
 
 
+def settings_locked() -> bool:
+    return bool(config.SETTINGS_PASSWORD)
+
+
+def _settings_token() -> str:
+    return _token_for(f"settings:{config.SETTINGS_PASSWORD}")
+
+
+async def require_settings(request: Request):
+    """Second factor for the Settings tab: an X-Settings-Token header derived
+    from SETTINGS_PASSWORD (obtained via POST /api/settings/unlock)."""
+    if not settings_locked():
+        return
+    supplied = request.headers.get("x-settings-token", "")
+    if not supplied or not hmac.compare_digest(supplied, _settings_token()):
+        raise HTTPException(403, "Settings are locked — enter the settings password")
+
+
 async def require_auth(request: Request, token: str | None = Query(default=None)):
     """Bearer token (or ?token= for <img> URLs) derived from WEB_PASSWORD."""
     if not auth_required():
@@ -90,7 +108,7 @@ router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 
 @public.get("/auth")
 async def auth_info():
-    return {"required": auth_required(), "version": 1}
+    return {"required": auth_required(), "settings_locked": settings_locked(), "version": 1}
 
 
 class LoginBody(BaseModel):
@@ -105,6 +123,16 @@ async def login(body: LoginBody):
         await asyncio.sleep(0.5)  # slow down guessing
         raise HTTPException(401, "Wrong password")
     return {"token": _token_for(config.WEB_PASSWORD)}
+
+
+@router.post("/settings/unlock")
+async def settings_unlock(body: LoginBody):
+    if not settings_locked():
+        return {"token": ""}
+    if not hmac.compare_digest(body.password, config.SETTINGS_PASSWORD):
+        await asyncio.sleep(0.5)
+        raise HTTPException(401, "Wrong settings password")
+    return {"token": _settings_token()}
 
 
 # ------------------------------------------------------------------ helpers
@@ -205,6 +233,8 @@ async def status():
         "telegram": bool(config.BOT_TOKEN),
         "settings": settings,
         "unread_events": sum(1 for e in load_events() if not e.get("read")),
+        "cache": cache_stats(),
+        "settings_locked": settings_locked(),
     }
 
 
@@ -268,6 +298,41 @@ async def group(gid: str, q: str | None = None):
 
 
 _cover_cache: "OrderedDict[str, tuple[bytes, str]]" = OrderedDict()
+_cache_cleared_at: str | None = None  # ISO timestamp of the last clear
+
+
+def cache_stats() -> dict:
+    return {
+        "covers": len(_cover_cache),
+        "bytes": sum(len(data) for data, _ in _cover_cache.values()),
+        "cleared_at": _cache_cleared_at,
+        "clear_every_hours": config.CACHE_CLEAR_HOURS,
+    }
+
+
+def clear_cache() -> dict:
+    """Drop everything the server caches in memory (poster images)."""
+    global _cache_cleared_at
+    before = cache_stats()
+    _cover_cache.clear()
+    _cache_cleared_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    log.info("cache cleared: %d covers, %d bytes", before["covers"], before["bytes"])
+    return {"cleared": {"covers": before["covers"], "bytes": before["bytes"]}, "cache": cache_stats()}
+
+
+async def cache_sweeper() -> None:
+    """Background task: clear the in-memory cache every CACHE_CLEAR_HOURS."""
+    hours = config.CACHE_CLEAR_HOURS
+    if hours <= 0:
+        return
+    while True:
+        await asyncio.sleep(hours * 3600)
+        clear_cache()
+
+
+@router.post("/cache/clear", dependencies=[Depends(require_settings)])
+async def cache_clear():
+    return clear_cache()
 _IMAGE_TYPES = (
     (b"\x89PNG", "image/png"),
     (b"\xff\xd8", "image/jpeg"),
@@ -745,7 +810,7 @@ class SettingPatch(BaseModel):
     value: Any
 
 
-@router.patch("/settings")
+@router.patch("/settings", dependencies=[Depends(require_settings)])
 async def patch_setting(body: SettingPatch):
     if body.key in SETTING_CHOICES:
         try:
@@ -786,7 +851,7 @@ class CookieBody(BaseModel):
     cookie: str
 
 
-@router.put("/cookie")
+@router.put("/cookie", dependencies=[Depends(require_settings)])
 async def cookie_update(body: CookieBody):
     cookie = body.cookie.strip()
     if not cookie:

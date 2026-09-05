@@ -27,6 +27,9 @@ Future<T?> guard<T>(BuildContext context, Future<T> Function() fn) async {
     if (e.unauthorized && context.mounted) {
       unawaited(AppScope.read(context).connect());
     }
+    if (e.settingsLocked && context.mounted) {
+      AppScope.read(context).lockSettings();
+    }
     if (context.mounted) showSnack(context, '❌ ${e.message}', error: true);
     return null;
   } on Exception catch (e) {

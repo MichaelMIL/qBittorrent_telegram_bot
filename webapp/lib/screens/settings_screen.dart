@@ -126,9 +126,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
+  Future<void> _clearCache() async {
+    await _run('Clearing the server cache', (api) async {
+      final r = await api.post('/api/cache/clear');
+      final cleared = jsonMap(r['cleared']);
+      // the browser keeps its own copy of the posters — drop that too
+      PaintingBinding.instance.imageCache
+        ..clear()
+        ..clearLiveImages();
+      return '🗑 Cache cleared — ${cleared['covers']} posters, '
+          '${fmtSize(_int(cleared['bytes']))}.';
+    });
+  }
+
+  static int _int(dynamic v) => v is num ? v.round() : 0;
+
+  static String _cacheSubtitle(Status? status) {
+    if (status == null) return '';
+    final every = status.cacheClearEveryHours;
+    final parts = <String>[
+      if (every > 0)
+        'Cleared automatically every ${every.toStringAsFixed(0)} h'
+      else
+        'No automatic clearing (CACHE_CLEAR_HOURS=0)',
+      if (status.cacheClearedAt != null)
+        'last cleared ${fmtAgo(status.cacheClearedAt!)}',
+    ];
+    return parts.join(' · ');
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
+    if (!state.settingsUnlocked) return const _LockedView();
     final status = state.status;
     final s = _settings;
     final theme = Theme.of(context);
@@ -137,6 +167,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       appBar: AppBar(
         title: const Text('⚙️ Settings'),
         actions: [
+          if (state.settingsLocked)
+            IconButton(
+              tooltip: 'Lock settings',
+              icon: const Icon(Icons.lock_outline),
+              onPressed: state.lockSettings,
+            ),
           IconButton(
             tooltip: 'Reload',
             icon: const Icon(Icons.refresh),
@@ -206,6 +242,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ),
                     ),
+
+                  const SectionTitle('🗂 Server cache'),
+                  ListTile(
+                    leading: const Icon(Icons.image_outlined),
+                    title: Text(
+                      status == null
+                          ? 'Poster cache'
+                          : '${status.cacheCovers} posters · '
+                                '${fmtSize(status.cacheBytes)} in memory',
+                    ),
+                    subtitle: Text(_cacheSubtitle(status)),
+                    trailing: FilledButton.tonalIcon(
+                      icon: const Icon(Icons.delete_sweep_outlined),
+                      label: const Text('Clear cache'),
+                      onPressed: _busy ? null : _clearCache,
+                    ),
+                  ),
 
                   const SectionTitle('🎛 Tunables'),
                   _picker(
@@ -384,9 +437,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     leading: const Icon(Icons.dns_outlined),
                     title: Text(state.api.baseUrl),
                     subtitle: Text(
-                      state.authRequired
-                          ? 'Password protected'
-                          : 'No password set (WEB_PASSWORD)',
+                      '${state.authRequired ? 'Password protected' : 'No password set (WEB_PASSWORD)'}'
+                      ' · settings lock ${state.settingsLocked ? 'on (SETTINGS_PASSWORD)' : 'off (SETTINGS_PASSWORD empty)'}',
                     ),
                     trailing: TextButton(
                       onPressed: () async {
@@ -443,6 +495,114 @@ class _SettingsScreenState extends State<SettingsScreen> {
             DropdownMenuItem(value: c, child: Text(fmt(c))),
         ],
         onChanged: (v) => v == null ? null : _set(key, v),
+      ),
+    );
+  }
+}
+
+/// Shown instead of the settings while SETTINGS_PASSWORD hasn't been entered
+/// in this session.
+class _LockedView extends StatefulWidget {
+  const _LockedView();
+
+  @override
+  State<_LockedView> createState() => _LockedViewState();
+}
+
+class _LockedViewState extends State<_LockedView> {
+  final _password = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _unlock() async {
+    final state = AppScope.read(context);
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await state.unlockSettings(_password.text);
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('⚙️ Settings')),
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Icon(Icons.lock_outline, size: 40),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Settings are locked',
+                      style: Theme.of(context).textTheme.titleLarge,
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Enter the settings password (SETTINGS_PASSWORD in the '
+                      "server's .env). It is asked once per session.",
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 20),
+                    TextField(
+                      controller: _password,
+                      obscureText: true,
+                      autofocus: true,
+                      onSubmitted: (_) => _unlock(),
+                      decoration: const InputDecoration(
+                        labelText: 'Settings password',
+                        prefixIcon: Icon(Icons.key_outlined),
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    if (_error != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        _error!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                    FilledButton.icon(
+                      onPressed: _busy ? null : _unlock,
+                      icon: _busy
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.lock_open),
+                      label: const Text('Unlock'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

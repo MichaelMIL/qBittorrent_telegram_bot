@@ -374,7 +374,14 @@ class Status {
       qbit = _str(j['qbit']),
       telegram = j['telegram'] == true,
       unreadEvents = _int(j['unread_events']),
-      settings = AppSettings.fromJson(jsonMap(j['settings']));
+      settings = AppSettings.fromJson(jsonMap(j['settings'])),
+      settingsLocked = j['settings_locked'] == true,
+      cacheCovers = _int(jsonMap(j['cache'])['covers']),
+      cacheBytes = _int(jsonMap(j['cache'])['bytes']),
+      cacheClearEveryHours = _double(jsonMap(j['cache'])['clear_every_hours']),
+      cacheClearedAt = DateTime.tryParse(
+        _str(jsonMap(j['cache'])['cleared_at']),
+      )?.toLocal();
   final int? snapshotTorrents;
   final DateTime? snapshotUpdated;
   final int favorites;
@@ -388,4 +395,9 @@ class Status {
   final String plexAuth;
   final String qbit;
   final AppSettings settings;
+  final bool settingsLocked;
+  final int cacheCovers;
+  final int cacheBytes;
+  final double cacheClearEveryHours;
+  final DateTime? cacheClearedAt;
 }

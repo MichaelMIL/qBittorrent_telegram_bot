@@ -17,6 +17,9 @@ class FakeServer {
     'plex_map': {'tv': '2'},
   };
   bool favAuto = false;
+  bool settingsLocked = false; // SETTINGS_PASSWORD set on the server
+  int cacheClears = 0;
+  String get settingsToken => 'settings-$password';
 
   // ---- GET /api/browse knobs -------------------------------------------
   /// One entry per browse request, as 'cat/page' (the plain [calls] list has
@@ -76,7 +79,13 @@ class FakeServer {
       await req.response.close();
     }
 
-    if (path == '/api/auth') return send({'required': true, 'version': 1});
+    if (path == '/api/auth') {
+      return send({
+        'required': true,
+        'settings_locked': settingsLocked,
+        'version': 1,
+      });
+    }
     if (path == '/api/login') {
       if (json['password'] != password) {
         return send({'detail': 'Wrong password'}, status: 401);
@@ -88,7 +97,25 @@ class FakeServer {
       return send({'detail': 'Not authorized'}, status: 401);
     }
 
+    final unlocked =
+        !settingsLocked ||
+        req.headers.value('x-settings-token') == settingsToken;
+
     switch ((method, path)) {
+      case ('POST', '/api/settings/unlock'):
+        if (json['password'] != 'lock') {
+          return send({'detail': 'Wrong settings password'}, status: 401);
+        }
+        return send({'token': settingsToken});
+      case ('POST', '/api/cache/clear'):
+        if (!unlocked) {
+          return send({'detail': 'Settings are locked'}, status: 403);
+        }
+        cacheClears++;
+        return send({
+          'cleared': {'covers': 7, 'bytes': 123456},
+          'cache': {'covers': 0, 'bytes': 0, 'clear_every_hours': 24},
+        });
       case ('GET', '/api/status'):
         return send({
           'snapshot': {
@@ -106,6 +133,13 @@ class FakeServer {
           'telegram': true,
           'settings': settings,
           'unread_events': 3,
+          'settings_locked': settingsLocked,
+          'cache': {
+            'covers': 7,
+            'bytes': 123456,
+            'clear_every_hours': 24,
+            'cleared_at': null,
+          },
         });
       case ('GET', '/api/settings'):
         return send({
@@ -120,6 +154,9 @@ class FakeServer {
           'hebits_cats': <String, String>{},
         });
       case ('PATCH', '/api/settings'):
+        if (!unlocked) {
+          return send({'detail': 'Settings are locked'}, status: 403);
+        }
         settings[json['key'] as String] = json['value'];
         return send({'settings': settings});
       case ('GET', '/api/search'):

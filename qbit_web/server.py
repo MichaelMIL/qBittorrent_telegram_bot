@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from qbit_bot import config, storage
 from qbit_bot.jobs import completion_notifier, favorites_episode_checker, qbit_cache_refresher
 
-from .api import install_error_handlers, public, router
+from .api import cache_sweeper, install_error_handlers, public, router
 
 log = logging.getLogger("qbit-web")
 
@@ -24,10 +24,10 @@ log = logging.getLogger("qbit-web")
 def create_app(run_jobs: bool) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        tasks = []
+        tasks = [asyncio.create_task(cache_sweeper())]  # server-local, both modes
         if run_jobs:
             storage.interval_changed = asyncio.Event()
-            tasks = [
+            tasks += [
                 asyncio.create_task(qbit_cache_refresher()),
                 asyncio.create_task(favorites_episode_checker(None)),
                 asyncio.create_task(completion_notifier(None)),
@@ -65,14 +65,23 @@ def create_app(run_jobs: bool) -> FastAPI:
 def urls() -> list[str]:
     """Where the web app is reachable — loopback plus the machine's LAN IPs."""
     hosts = ["localhost"]
-    try:
+    candidates = []
+    try:  # works on macOS; on Linux the hostname often maps to 127.0.1.1 only
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            ip = info[4][0]
-            if not ip.startswith("127.") and ip not in hosts:
-                hosts.append(ip)
+            candidates.append(info[4][0])
     except socket.gaierror:
         pass
-    return [f"http://{h}:{config.WEB_PORT}" for h in hosts]
+    try:  # the interface that routes to the internet (no packet is sent)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            candidates.append(s.getsockname()[0])
+    except OSError:
+        pass
+    for ip in candidates:
+        if not ip.startswith("127.") and ip not in hosts:
+            hosts.append(ip)
+    port = config.WEB_PORT
+    return [f"http://{h}:{port}" for h in hosts]
 
 
 def _warn_if_open() -> None:
@@ -83,9 +92,10 @@ def _warn_if_open() -> None:
         )
 
 
-async def serve_in_loop() -> None:
-    """Run uvicorn on the *current* loop (the Telegram bot's) without letting
-    it take over the process signal handlers."""
+def make_server() -> uvicorn.Server:
+    """A uvicorn server for the *current* loop (the Telegram bot's) that leaves
+    the process signal handlers alone. Run it with `await server.serve()`; stop
+    it with `server.should_exit = True` and await the same coroutine."""
     _warn_if_open()
     server = uvicorn.Server(
         uvicorn.Config(
@@ -98,7 +108,12 @@ async def serve_in_loop() -> None:
     # uvicorn wants to own SIGINT/SIGTERM; python-telegram-bot already does
     server.install_signal_handlers = lambda: None  # uvicorn < 0.29
     server.capture_signals = contextlib.nullcontext  # uvicorn >= 0.29
-    await server.serve()
+    return server
+
+
+async def serve_in_loop() -> None:
+    """Run the web server on the current loop until cancelled."""
+    await make_server().serve()
 
 
 def main() -> None:

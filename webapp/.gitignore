@@ -30,7 +30,10 @@ migrate_working_dir/
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
-/build/
+# the web bundle is committed (deployed by git pull); see the root .gitignore
+/build/*
+!/build/web/
+/build/web/canvaskit/
 /coverage/
 
 # Symbolication related
