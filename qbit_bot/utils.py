@@ -135,6 +135,30 @@ def episode_tag(title: str) -> str:
     return ""
 
 
+# HeBits labels resolutions inconsistently ("4K" for UHD, "SD" for standard
+# definition); the bot's resolution choices (2160p/1080p/720p/480p) are the
+# canonical forms, so releases are normalized to those on the way in.
+RESOLUTION_ALIASES = {
+    "4k": "2160p",
+    "uhd": "2160p",
+    "2160": "2160p",
+    "1080": "1080p",
+    "1080i": "1080i",
+    "720": "720p",
+    "480": "480p",
+    "sd": "SD",
+}
+
+
+def normalize_resolution(value: str) -> str:
+    """Canonical resolution label ('4K' → '2160p', '1080P' → '1080p', …).
+    Unknown labels are returned unchanged; empty stays empty."""
+    v = (value or "").strip()
+    if not v:
+        return ""
+    return RESOLUTION_ALIASES.get(v.lower(), v.lower() if v[-1] in "pPiI" else v)
+
+
 def normalize_name(name: str) -> str:
     """Normalize a release name for matching (dots/spaces/case don't matter).
 

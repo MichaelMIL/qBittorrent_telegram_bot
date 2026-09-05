@@ -1,12 +1,11 @@
 """HeBits (Gazelle) API: search, download, covers, session cookie."""
 
-import os
 import requests
 from urllib.parse import urlparse
 
 from . import config
 from .config import HEBITS_URL
-from .utils import episode_key
+from .utils import episode_key, normalize_resolution
 
 HEBITS_CATS = {
     1: "🎬 Movies",
@@ -76,15 +75,28 @@ def hebits_search(query: str, cat: str = "a", page: int = 1) -> tuple[list[dict]
     """Search HeBits (Gazelle JSON API).
 
     cat: 'a' = all, or a HeBits category id ('1' movies, '2' series, …).
-    Returns (flat list of torrent dicts, total pages).
+    Returns (list of group dicts, total pages).
     """
+    return hebits_browse({"searchstr": query, "order_by": "seeders"}, cat, page)
+
+
+def hebits_latest(cat: str, page: int = 1) -> tuple[list[dict], int]:
+    """Newest uploads in a category, like the site's movies.php / series.php
+    pages: the browse endpoint with no search text, newest first.
+    cat: HeBits category id ('1' movies, '2' series). Returns (groups, pages)."""
+    return hebits_browse({"order_by": "time"}, cat, page)
+
+
+def hebits_browse(extra: dict, cat: str = "a", page: int = 1) -> tuple[list[dict], int]:
+    """Gazelle `action=browse`, grouped by movie/show; `extra` adds/overrides
+    query parameters (searchstr, order_by, …)."""
     params = {
         "action": "browse",
-        "searchstr": query,
         "group_results": 1,
         "order_by": "seeders",
         "order_way": "desc",
         "page": page,
+        **extra,
     }
     if cat != "a":
         params[f"filter_cat[{cat}]"] = 1
@@ -110,7 +122,7 @@ def hebits_search(query: str, cat: str = "a", page: int = 1) -> tuple[list[dict]
                 {
                     "id": t["torrentId"],
                     "title": t.get("release") or group.get("groupName") or f"#{t['torrentId']}",
-                    "resolution": t.get("resolution") or "",
+                    "resolution": normalize_resolution(t.get("resolution") or ""),
                     "codec": t.get("codec") or "",
                     "container": t.get("container") or "",
                     "subs": t.get("subbing") or "",
@@ -149,6 +161,14 @@ def hebits_search(query: str, cat: str = "a", page: int = 1) -> tuple[list[dict]
     return groups, int(data["response"].get("pages") or 1)
 
 
+def is_hebits_host(url: str) -> bool:
+    """True only for hebits.net itself and its subdomains (i.hebits.net), so
+    the session cookie never goes to look-alikes such as evilhebits.net —
+    cover URLs are uploader-controlled."""
+    host = (urlparse(url).hostname or "").lower()
+    return host == "hebits.net" or host.endswith(".hebits.net")
+
+
 def fetch_cover(url: str) -> bytes | None:
     """Download a cover image from this machine (avoids Telegram's servers being
     geo-blocked by hosts like imgur/ibb). Returns None if it isn't a usable image.
@@ -156,7 +176,7 @@ def fetch_cover(url: str) -> bytes | None:
     headers = {
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
     }
-    if urlparse(url).netloc.endswith("hebits.net"):
+    if is_hebits_host(url):
         headers["Cookie"] = config.HEBITS_COOKIE
     try:
         r = requests.get(url, headers=headers, timeout=20)

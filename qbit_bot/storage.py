@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from .config import (
     DEFAULT_SETTINGS,
+    EVENTS_PATH,
     FAVORITES_PATH,
     HISTORY_PATH,
     NOTIFIED_PATH,
@@ -187,6 +188,58 @@ def record_notified(tid: int, meta: dict) -> None:
 
 def get_notified(tid: int) -> dict:
     return _load(NOTIFIED_PATH).get(str(tid), {})
+
+
+# ------------------------------------------------------------------ events
+
+EVENTS_KEEP = 200
+
+
+def load_events() -> list[dict]:
+    """Notification feed for the web app, newest last: [{id, ts, read, type, …}].
+    Every alert the bot would send to Telegram is recorded here too."""
+    data = _load(EVENTS_PATH)
+    items = data.get("items")
+    return items if isinstance(items, list) else []
+
+
+def record_event(note: dict) -> dict:
+    """Append a notification to the feed and return it (with id and ts)."""
+    with _lock:
+        data = _load(EVENTS_PATH)
+        items = data.get("items") if isinstance(data.get("items"), list) else []
+        event = {
+            **note,
+            "id": int(data.get("next_id") or 1),
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "read": False,
+        }
+        items.append(event)
+        del items[:-EVENTS_KEEP]
+        _save(EVENTS_PATH, {"next_id": event["id"] + 1, "items": items})
+    return event
+
+
+def mark_events_read(ids: list[int] | None = None) -> None:
+    """Mark the given events (or all of them) as read."""
+    with _lock:
+        data = _load(EVENTS_PATH)
+        items = data.get("items") if isinstance(data.get("items"), list) else []
+        for e in items:
+            if ids is None or e.get("id") in ids:
+                e["read"] = True
+        _save(EVENTS_PATH, {"next_id": data.get("next_id", len(items) + 1), "items": items})
+
+
+def remove_event(event_id: int) -> bool:
+    with _lock:
+        data = _load(EVENTS_PATH)
+        items = data.get("items") if isinstance(data.get("items"), list) else []
+        kept = [e for e in items if e.get("id") != event_id]
+        if len(kept) == len(items):
+            return False
+        _save(EVENTS_PATH, {"next_id": data.get("next_id", len(items) + 1), "items": kept})
+        return True
 
 
 # ------------------------------------------------------------------ defaults

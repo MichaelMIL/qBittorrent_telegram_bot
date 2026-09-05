@@ -1,9 +1,12 @@
-# qBittorrent Telegram Bot
+# qBittorrent Telegram Bot + Web App
 
-A personal Telegram bot that manages the qBittorrent instance on your Mac and
-searches your [HeBits](https://hebits.net) account — all from one chat: search
-with posters and season navigation, add with tags and categories, track
-downloads, star favorite series, and get pinged when a new episode drops.
+A personal Telegram bot — and a matching web app for phones and desktops — that
+manages the qBittorrent instance on your Mac and searches your
+[HeBits](https://hebits.net) account: search with posters and season
+navigation, add with tags and categories, track downloads, star favorite
+series, and get pinged when a new episode drops. Both front ends share one
+backend, so favorites, series defaults, watches and settings are the same
+everywhere.
 
 ## Features
 
@@ -67,6 +70,16 @@ downloads, star favorite series, and get pinged when a new episode drops.
 - **Button bar** — a persistent reply keyboard (📚 List · ⭐ Favorites ·
   🆕 Check · 🏷 Tags · 📁 Categories · 🎞 Plex · ⚙️ Settings) makes daily
   use tap-only; typing is needed only for searches and naming new tags
+- **Web app** — the same features in a browser (`http://<mac-ip>:8765`,
+  works on mobile): a **New on HeBits** home screen (newest series and
+  movies as poster tiles, paged), search results as poster tiles, a detail card with
+  season chips and one row per release, the tag → category add flow with
+  series defaults, magnet/.torrent adds, the live torrent list with
+  pause/resume/tags/category/delete, favorites with ⚡ auto-add and the
+  default wizard, an **Activity** feed with every notification (new
+  episodes with add buttons, completion pings with a Scan Plex button,
+  stuck alerts), Plex scans and all the settings. Optional password
+  (`WEB_PASSWORD`). See [Web app](#web-app)
 - **Private** — the bot only serves the Telegram user IDs in
   `ALLOWED_USER_IDS`; anyone else gets a rejection message that includes
   their own user id, so adding a trusted person is as easy as having them
@@ -77,7 +90,8 @@ downloads, star favorite series, and get pinged when a new episode drops.
 ## Project layout
 
 ```
-bot.py                 entry point (python bot.py)
+bot.py                 entry point: Telegram bot + web app (python bot.py)
+web.py                 entry point: web app only, no Telegram (python web.py)
 hebits_cookie.py       standalone cookie-capture helper
 qbit_bot/
   config.py            env, paths, constants
@@ -88,12 +102,18 @@ qbit_bot/
   plex.py              Plex API: list libraries, trigger scans
   views.py             message texts and keyboards
   jobs.py              background loops (snapshot refresh, episode alerts,
-                       completion pings)
+                       completion pings) — every alert is a plain "note"
+                       recorded to the events feed and rendered for Telegram
   handlers.py          commands, callbacks, add flows
-  main.py              application wiring
+  main.py              application wiring (starts the web server too)
+qbit_web/
+  api.py               FastAPI JSON API over the qbit_bot services
+  server.py            app factory; runs inside the bot's loop or standalone
+webapp/                Flutter web app (lib/, test/; build with flutter build web)
 data/                  runtime state (git-ignored): history.json,
                        favorites.json, qbit_cache.json, bot_settings.json,
-                       watch.json, series_defaults.json, notified.json
+                       watch.json, series_defaults.json, notified.json,
+                       events.json (notification feed shown in the web app)
 ```
 
 ## Setup
@@ -160,6 +180,47 @@ one:
   PlexOnlineToken`. (Avoid the "View XML" browser token — Plex documents it
   as temporary)
 
+### 6. Web app (optional)
+
+The backend serves the Flutter build itself, so it's one process:
+
+```bash
+# once (or after pulling changes to webapp/): needs the Flutter SDK
+cd webapp && flutter build web && cd ..
+
+# .env: set a password — without one, anyone on your network can control
+# qBittorrent through the app
+WEB_PASSWORD=something-long
+
+python bot.py     # Telegram + web app on http://<mac-ip>:8765
+python web.py     # web app only (no BOT_TOKEN needed); runs the same
+                  # background jobs, notifications land in the Activity feed
+```
+
+Open `http://<mac-ip>:8765` from any browser on the LAN (add it to the phone's
+home screen — it's a PWA). `WEB_HOST`, `WEB_PORT` and `WEB_ENABLED=0` (to
+turn the server off in `bot.py`) are in `.env.example`. The startup log
+prints the reachable URLs. Interactive API docs: `/api/docs`.
+
+Don't run `bot.py` and `web.py` at the same time — both run the background
+jobs, so you'd get double notifications and double auto-adds.
+
+## Web app
+
+| Tab | What's there |
+|---|---|
+| 🆕 New (home) | the newest uploads on HeBits — the site's `series.php` / `movies.php` pages — as poster tiles, one tab per category, paged, pull-to-refresh. Same markers and detail card as search, so adding works the same way. On phones this is the first bottom-bar slot; Search is reached from its app bar |
+| 🔎 Search | HeBits search with 🌐/🎬/📺 filter and paging; poster tiles with the same markers as the bot (✅ ⏬ 📥 🆓 ✔️). Tap a tile for the detail card: poster, titles, IMDB, ⭐ favorite toggle, season chips, one row per release. Tap a release to add it — the series default is offered first, otherwise tag → category (existing / new / none); afterwards you can 📌 make the choice the series default and pick a resolution. The ➕ button adds a magnet link or a .torrent file |
+| 📚 Library | everything in qBittorrent, live (5 s), filter by tag / category / name. Tap a torrent for progress, speeds, ETA, peers, path, pause/resume, tags (toggle, new), category, delete (with or without files, confirmed) |
+| ⭐ Favorites | starred series with their default and newest known episode; ⚡ switch toggles auto-add (walks you through setting a default if there is none); the ⋮ menu edits / forgets the default or removes the favorite; **Check episodes** runs the scan right now |
+| 🔔 Activity | the notification feed: new episodes (tap a release to add it), auto-adds, completion pings (with **Scan Plex now**), stuck / error alerts, Plex scans. Unread count on the tab; swipe to dismiss |
+| 🎞 Plex | libraries with one-tap scans and live "scanning…" state (top-level on wide screens, under Settings / Library on phones) |
+| ⚙️ Settings | status, the four intervals, auto-scan toggle, category → Plex library map, refresh / check / validate cookie / update cookie, log out |
+
+Development: `cd webapp && flutter run -d chrome` starts the app on a dev
+server; on the connect screen point it at the backend URL (CORS is open).
+`flutter test` runs the widget tests against an in-process fake API.
+
 ## Commands
 
 | Command | What it does |
@@ -200,4 +261,5 @@ systemctl --user enable --now qbit-bot
 ```
 
 On macOS, use `launchd` or simply
-`nohup .venv/bin/python bot.py >/tmp/qbit-bot.log 2>&1 &`.
+`nohup .venv/bin/python bot.py >/tmp/qbit-bot.log 2>&1 &`. The web app is
+served by the same process.

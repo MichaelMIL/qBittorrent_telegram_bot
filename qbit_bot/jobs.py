@@ -1,6 +1,11 @@
 """Background loops: qBittorrent snapshot refresh, new-episode alerts (with
 ⚡ auto-add for favorites that have a series default), and download-completion
-notifications."""
+notifications.
+
+Every alert is a plain dict ("note") that is recorded to the events feed
+(data/events.json — what the web app shows) and, when a Telegram Application
+is attached, also rendered and sent to the allowed chats. The loops therefore
+run identically under bot.py (Telegram + web) and web.py (web only)."""
 
 import asyncio
 import html
@@ -8,9 +13,6 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import requests
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.constants import ParseMode
-from telegram.ext import Application
 
 from . import config
 from .hebits import HebitsError, hebits_download, hebits_search
@@ -22,6 +24,7 @@ from .storage import (
     load_series_defaults,
     load_settings,
     load_watches,
+    record_event,
     record_history,
     record_notified,
     remove_watch,
@@ -34,6 +37,7 @@ from .utils import (
     episode_tag,
     fmt_duration,
     fmt_size,
+    normalize_resolution,
     torrent_info_hash,
 )
 from .views import default_label, plex_section_label
@@ -66,8 +70,87 @@ def _bg(coro) -> None:
     task.add_done_callback(_bg_tasks.discard)
 
 
-async def _send_all(app: "Application", chat_ids, text: str, kb=None) -> list[int]:
+# ------------------------------------------------------------------ notes
+
+def render_note(note: dict):
+    """Telegram (text, keyboard) for a structured notification."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    kind = note["type"]
+    if kind == "auto_added":
+        lines = [
+            f"⚡ <b>{html.escape(note['series'])}</b> — auto-added with "
+            f"{default_label(note['default'])}:"
+        ]
+        for t in note["releases"]:
+            lines.append(
+                f"• {episode_tag(t['title'])} · {t['resolution'] or '?'} · "
+                f"{fmt_size(t['size'])} · 🌱{t['seeders']}"
+            )
+        return "\n".join(lines), None
+
+    if kind == "new_episodes":
+        episodes = note["episodes"]
+        plural = "s" if len(episodes) > 1 else ""
+        lines = [
+            f"🆕 <b>{html.escape(note['series'])}</b> — new episode{plural}: "
+            f"{', '.join(episodes)}",
+            "",
+            "Pick a version to add to qBittorrent:",
+        ]
+        rows = []
+        for t in note["releases"]:
+            tech = t["resolution"] or "?"
+            marks = "🆓" if t["free"] else ""
+            label = (
+                f"⬇️{marks} 🌱{t['seeders']} · "
+                f"{episode_tag(t['title'])} · {tech} · {fmt_size(t['size'])}"
+            )
+            rows.append([InlineKeyboardButton(label[:60], callback_data=f"nf:{t['id']}")])
+        rows.append([InlineKeyboardButton("✖️ Dismiss", callback_data="sx")])
+        return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+    if kind == "completed":
+        where = f"\n📁 {html.escape(note['category'])}" if note.get("category") else ""
+        text = (
+            f"🏁 <b>{html.escape(note['name'])}</b>\n"
+            f"Download complete — files are in their final location.{where}"
+        )
+        kb = None
+        if not note.get("auto_scan"):
+            kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🎞 Scan Plex now", callback_data="px:aq")]]
+            )
+        return text, kb
+
+    if kind == "error":
+        return (
+            f"❌ <b>{html.escape(note['name'])}</b> ran into a problem "
+            f"(state: <code>{note['state']}</code>) — check qBittorrent.",
+            None,
+        )
+
+    if kind == "stalled":
+        return (
+            f"🐌 <b>{html.escape(note['name'])}</b> has been stalled at "
+            f"{note['progress']:.0%} for over {note['hours']} h — no "
+            "connectable seeds? Check /list.",
+            None,
+        )
+
+    if kind == "plex_scan":
+        return f"🔍 Plex is scanning {', '.join(note['libraries'])}…", None
+
+    if kind == "plex_scan_failed":
+        return f"⚠️ Auto Plex scan failed: {note['error']}", None
+
+    return html.escape(str(note)), None
+
+
+async def _send_all(app, chat_ids, text: str, kb=None) -> list[int]:
     """Send a message to every chat; returns the ids that actually got it."""
+    from telegram.constants import ParseMode
+
     sent = []
     for chat_id in filter(None, chat_ids):
         try:
@@ -79,6 +162,21 @@ async def _send_all(app: "Application", chat_ids, text: str, kb=None) -> list[in
             log.warning("notification to %s failed: %s", chat_id, e)
     return sent
 
+
+async def notify(app, chat_ids, note: dict) -> list[int]:
+    """Record a note in the events feed and, with a Telegram app attached,
+    send it to the chats. Returns the chat ids that received it."""
+    try:
+        record_event(note)
+    except OSError as e:
+        log.warning("could not record event: %s", e)
+    if app is None:
+        return []
+    text, kb = render_note(note)
+    return await _send_all(app, chat_ids, text, kb)
+
+
+# ------------------------------------------------------------------ plex
 
 PLEX_SCAN_POLL_SECONDS = 5
 PLEX_SCAN_TIMEOUT = 3600
@@ -119,7 +217,7 @@ def resolve_scan_targets(sections: list[dict], category: str | None, plex_map: d
     return [s for s in sections if s["key"] == key] or list(sections)
 
 
-async def scan_after_completion(app: "Application", chat_ids: list[int], category: str | None):
+async def scan_after_completion(app, chat_ids: list[int], category: str | None):
     """Auto-scan Plex after a completed download and report into the chat(s)."""
     try:
         sections = await asyncio.to_thread(plex_sections)
@@ -128,19 +226,24 @@ async def scan_after_completion(app: "Application", chat_ids: list[int], categor
             await asyncio.to_thread(plex_refresh, s["key"])
     except PlexError as e:
         log.warning("auto Plex scan failed: %s", e)
-        await _send_all(app, chat_ids, f"⚠️ Auto Plex scan failed: {e}")
+        await notify(app, chat_ids, {"type": "plex_scan_failed", "error": str(e)})
         return
-    names = ", ".join(plex_section_label(s) for s in targets)
+    names = [plex_section_label(s) for s in targets]
+    record_event({"type": "plex_scan", "libraries": names, "auto": True})
+    if app is None:
+        return
     for chat_id in filter(None, chat_ids):
         try:
-            msg = await app.bot.send_message(chat_id, f"🔍 Plex is scanning {names}…")
+            msg = await app.bot.send_message(chat_id, f"🔍 Plex is scanning {', '.join(names)}…")
         except Exception as e:
             log.warning("scan status message to %s failed: %s", chat_id, e)
             continue
         _bg(watch_plex_scan(msg, targets))
 
 
-async def completion_notifier(app: "Application"):
+# ------------------------------------------------------------------ completion
+
+async def completion_notifier(app=None):
     """Background task: announce bot-added torrents once the download is
     complete AND qBittorrent has finished moving the files into place;
     also alert on errored or long-stalled downloads."""
@@ -174,34 +277,33 @@ async def completion_notifier(app: "Application"):
                 continue
 
             if t.progress >= 1 and t.state not in SETTLING_STATES:
-                where = f"\n📁 {html.escape(t.category)}" if t.category else ""
-                text = (
-                    f"🏁 <b>{html.escape(t.name)}</b>\n"
-                    f"Download complete — files are in their final location.{where}"
-                )
                 auto_scan = settings["auto_plex_scan"]
-                kb = None
-                if not auto_scan:
-                    kb = InlineKeyboardMarkup(
-                        [[InlineKeyboardButton("🎞 Scan Plex now", callback_data="px:aq")]]
-                    )
-                sent = await _send_all(app, recipients, text, kb)
-                if not sent:
-                    continue  # keep the watch and retry next cycle
+                sent = await notify(
+                    app,
+                    recipients,
+                    {
+                        "type": "completed",
+                        "name": t.name,
+                        "hash": t.hash,
+                        "category": t.category or "",
+                        "auto_scan": bool(auto_scan),
+                    },
+                )
+                if app is not None and not sent:
+                    continue  # Telegram down: keep the watch and retry next cycle
                 log.info("completion announced: %s", t.name)
                 remove_watch(info_hash)
                 if auto_scan:
-                    _bg(scan_after_completion(app, sent, t.category))
+                    _bg(scan_after_completion(app, sent or recipients, t.category))
                 continue
 
             # problem alerts (once per problem; cleared when it recovers)
             if t.state in ERROR_STATES:
                 if entry.get("alerted") != "error":
-                    await _send_all(
+                    await notify(
                         app,
                         recipients,
-                        f"❌ <b>{html.escape(t.name)}</b> ran into a problem "
-                        f"(state: <code>{t.state}</code>) — check qBittorrent.",
+                        {"type": "error", "name": t.name, "hash": t.hash, "state": t.state},
                     )
                     update_watch(info_hash, alerted="error")
                 continue
@@ -221,16 +323,36 @@ async def completion_notifier(app: "Application"):
                     except ValueError:
                         continue
                     if datetime.now(timezone.utc) - since > timedelta(hours=stall_hours):
-                        await _send_all(
+                        await notify(
                             app,
                             recipients,
-                            f"🐌 <b>{html.escape(t.name)}</b> has been stalled at "
-                            f"{t.progress:.0%} for over {stall_hours} h — no "
-                            "connectable seeds? Check /list.",
+                            {
+                                "type": "stalled",
+                                "name": t.name,
+                                "hash": t.hash,
+                                "progress": t.progress,
+                                "hours": stall_hours,
+                            },
                         )
                         update_watch(info_hash, alerted="stall")
             elif entry.get("stalled_since") or entry.get("alerted"):
                 update_watch(info_hash, stalled_since=None, alerted=None)  # recovered
+
+
+# ------------------------------------------------------------------ episodes
+
+def release_summary(t: dict) -> dict:
+    """The fields of a HeBits release worth keeping in a notification."""
+    return {
+        "id": t["id"],
+        "title": t["title"],
+        "resolution": t.get("resolution") or "",
+        "size": t.get("size") or 0,
+        "seeders": t.get("seeders") or 0,
+        "free": bool(t.get("free")),
+        "snatched": bool(t.get("snatched")),
+        "episode": episode_tag(t["title"]),
+    }
 
 
 def auto_add_new(new: list, default: dict, series: str) -> tuple[list, list]:
@@ -243,11 +365,14 @@ def auto_add_new(new: list, default: dict, series: str) -> tuple[list, list]:
     by_key: dict[tuple, list[dict]] = {}
     for k, t in new:
         by_key.setdefault(k, []).append(t)  # seeders desc within an episode
-    want = default.get("resolution")
+    want = normalize_resolution(default.get("resolution") or "")
     remaining, added = [], []
     for k in sorted(by_key, reverse=True):
         releases = by_key[k]
-        pick = next((t for t in releases if not want or t["resolution"] == want), None)
+        pick = next(
+            (t for t in releases if not want or normalize_resolution(t["resolution"]) == want),
+            None,
+        )
         if pick is None:
             remaining += [(k, t) for t in releases]
             continue
@@ -279,7 +404,8 @@ def auto_add_new(new: list, default: dict, series: str) -> tuple[list, list]:
 def collect_new_episodes() -> list[dict]:
     """Check every favorite on HeBits for episodes newer than its watermark.
 
-    Returns [{text, keyboard}] messages to send; updates each favorite's
+    Returns the notes to announce ({type: "auto_added" | "new_episodes", …}),
+    each already recorded in the events feed; updates each favorite's
     "last_ep" watermark so an episode is only announced once. On the first
     check of a favorite, just records the current newest episode silently.
     """
@@ -332,54 +458,46 @@ def collect_new_episodes() -> list[dict]:
         if default:
             new, added = auto_add_new(new, default, entry["name"])
             if added:
-                lines = [
-                    f"⚡ <b>{html.escape(entry['name'])}</b> — auto-added with "
-                    f"{default_label(default)}:"
-                ]
-                for t in added:
-                    lines.append(
-                        f"• {episode_tag(t['title'])} · {t['resolution'] or '?'} · "
-                        f"{fmt_size(t['size'])} · 🌱{t['seeders']}"
-                    )
-                notifications.append({"text": "\n".join(lines), "kb": None})
+                note = {
+                    "type": "auto_added",
+                    "series": entry["name"],
+                    "gid": gid,
+                    "default": default,
+                    "releases": [release_summary(t) for t in added],
+                }
+                record_event(note)
+                notifications.append(note)
             if not new:
                 continue
 
         episodes = sorted({episode_tag(t["title"]) for _, t in new}, reverse=True)
-        plural = "s" if len(episodes) > 1 else ""
-        lines = [
-            f"🆕 <b>{html.escape(entry['name'])}</b> — new episode{plural}: "
-            f"{', '.join(episodes)}",
-            "",
-            "Pick a version to add to qBittorrent:",
-        ]
-        rows = []
+        releases = []
         for k, t in new[:12]:
             record_notified(
                 t["id"], {"title": t["title"], "gid": gid, "series": entry["name"]}
             )
-            tech = t["resolution"] or "?"
-            marks = "🆓" if t["free"] else ""
-            label = (
-                f"⬇️{marks} 🌱{t['seeders']} · "
-                f"{episode_tag(t['title'])} · {tech} · {fmt_size(t['size'])}"
-            )
-            rows.append([InlineKeyboardButton(label[:60], callback_data=f"nf:{t['id']}")])
-        rows.append([InlineKeyboardButton("✖️ Dismiss", callback_data="sx")])
-        notifications.append({"text": "\n".join(lines), "kb": InlineKeyboardMarkup(rows)})
+            releases.append(release_summary(t))
+        note = {
+            "type": "new_episodes",
+            "series": entry["name"],
+            "gid": gid,
+            "episodes": episodes,
+            "releases": releases,
+        }
+        record_event(note)
+        notifications.append(note)
     return notifications
 
 
-async def favorites_episode_checker(app: "Application"):
+async def favorites_episode_checker(app=None):
     """Background task: every few hours, announce new episodes of favorites."""
     while True:
         try:
             notifications = await asyncio.to_thread(collect_new_episodes)
-            for note in notifications:
-                for uid in config.ALLOWED_USER_IDS:
-                    await app.bot.send_message(
-                        uid, note["text"], reply_markup=note["kb"], parse_mode=ParseMode.HTML
-                    )
+            if app is not None:
+                for note in notifications:
+                    text, kb = render_note(note)
+                    await _send_all(app, config.ALLOWED_USER_IDS, text, kb)
             if notifications:
                 log.info("sent %d new-episode notification(s)", len(notifications))
         except Exception as e:

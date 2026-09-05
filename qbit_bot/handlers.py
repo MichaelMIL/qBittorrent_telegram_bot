@@ -21,7 +21,7 @@ from .hebits import (
     hebits_whoami,
     save_hebits_cookie,
 )
-from .jobs import collect_new_episodes, watch_plex_scan
+from .jobs import collect_new_episodes, render_note, watch_plex_scan
 from .plex import PlexError, plex_refresh, plex_sections
 from .qbit import decorate_local_status, fetch_qbit_torrents, qb
 from .storage import (
@@ -294,9 +294,8 @@ async def run_favorites_check(message) -> None:
         return
     await loading.delete()
     for note in notifications:
-        await message.reply_text(
-            note["text"], reply_markup=note["kb"], parse_mode=ParseMode.HTML
-        )
+        text, kb = render_note(note)
+        await message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @restricted

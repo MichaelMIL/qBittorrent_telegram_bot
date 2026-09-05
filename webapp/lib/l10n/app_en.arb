@@ -1,0 +1,10 @@
+{
+  "@@locale": "en",
+  "appTitle": "App",
+  "@appTitle": {
+    "description": "Application title shown in the OS task switcher."
+  },
+  "errorGeneric": "Something went wrong. Please try again.",
+  "errorNetwork": "You appear to be offline.",
+  "actionRetry": "Retry"
+}

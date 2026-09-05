@@ -1,13 +1,17 @@
-"""Application wiring and entry point."""
+"""Application wiring and entry point: the Telegram bot plus (unless
+WEB_ENABLED=0) the web app's API server, both on one asyncio loop so they
+share background jobs, the settings wake-up event and the HeBits cookie."""
 
 import asyncio
 import logging
 
 from telegram import Update
+from telegram.error import Conflict, NetworkError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
+    ContextTypes,
     MessageHandler,
     filters,
 )
@@ -36,7 +40,24 @@ from .jobs import completion_notifier, favorites_episode_checker, qbit_cache_ref
 log = logging.getLogger("qbit-bot")
 
 
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log errors that escape the handlers as one clear line each; PTB's
+    polling loop retries by itself."""
+    err = context.error
+    if isinstance(err, Conflict):
+        log.error(
+            "Telegram says another instance of this bot is polling with the same "
+            "token (%s). Stop the other copy — bot.py must run exactly once.", err
+        )
+    elif isinstance(err, NetworkError):
+        log.warning("Telegram network error (will retry): %s", err)
+    else:
+        log.exception("Unhandled error while processing %s", update, exc_info=err)
+
+
 def main():
+    if not config.BOT_TOKEN:
+        raise SystemExit("Set BOT_TOKEN in .env (or run `python web.py` for the web app only).")
     if not config.ALLOWED_USER_IDS:
         raise SystemExit("Set ALLOWED_USER_IDS in .env — the bot must not be open to everyone.")
 
@@ -45,6 +66,10 @@ def main():
         app_.create_task(qbit_cache_refresher())
         app_.create_task(favorites_episode_checker(app_))
         app_.create_task(completion_notifier(app_))
+        if config.WEB_ENABLED:
+            from qbit_web.server import serve_in_loop
+
+            app_.create_task(serve_in_loop())
 
     app = (
         Application.builder()
@@ -69,6 +94,7 @@ def main():
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.Document.ALL, on_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+    app.add_error_handler(on_error)
 
     log.info("Bot starting…")
     app.run_polling(allowed_updates=Update.ALL_TYPES)

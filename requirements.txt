@@ -2,3 +2,7 @@ python-telegram-bot>=21.0
 qbittorrent-api>=2024.1.58
 python-dotenv>=1.0.0
 requests>=2.31
+# web app backend (qbit_web)
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9

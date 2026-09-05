@@ -1,0 +1,17 @@
+include: package:very_good_analysis/analysis_options.yaml
+
+analyzer:
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+    - "**/*.gr.dart"
+    - "lib/l10n/app_localizations*.dart"
+
+linter:
+  rules:
+    # Internal single-user app UI: dartdoc on every widget member adds noise
+    # without value. Public types and non-obvious members are still documented.
+    public_member_api_docs: false
+    # Code is formatted at 80 columns by `dart format`; only long user-facing
+    # string literals and URLs exceed it, and splitting those hurts grep-ability.
+    lines_longer_than_80_chars: false

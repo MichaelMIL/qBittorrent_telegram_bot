@@ -12,7 +12,7 @@ DATA_DIR = BASE_DIR / "data"
 
 load_dotenv(BASE_DIR / ".env")
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()  # required by bot.py only
 ALLOWED_USER_IDS = {
     int(x) for x in os.environ.get("ALLOWED_USER_IDS", "").split(",") if x.strip()
 }
@@ -30,6 +30,13 @@ HEBITS_COOKIE = os.environ.get("HEBITS_COOKIE", "").strip()
 
 PLEX_URL = os.environ.get("PLEX_URL", "http://localhost:32400").rstrip("/")
 PLEX_TOKEN = os.environ.get("PLEX_TOKEN", "").strip()
+
+# web app (qbit_web): served by bot.py alongside Telegram, or alone by web.py
+WEB_ENABLED = os.environ.get("WEB_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+WEB_HOST = os.environ.get("WEB_HOST", "0.0.0.0").strip()
+WEB_PORT = int(os.environ.get("WEB_PORT", "8765"))
+WEB_PASSWORD = os.environ.get("WEB_PASSWORD", "").strip()  # empty = no login
+WEB_BUILD_DIR = BASE_DIR / "webapp" / "build" / "web"
 
 PAGE_SIZE = 8
 SEARCH_RESULTS = 10
@@ -60,6 +67,7 @@ SETTINGS_PATH = str(DATA_DIR / "bot_settings.json")
 WATCH_PATH = str(DATA_DIR / "watch.json")
 SERIES_DEFAULTS_PATH = str(DATA_DIR / "series_defaults.json")
 NOTIFIED_PATH = str(DATA_DIR / "notified.json")
+EVENTS_PATH = str(DATA_DIR / "events.json")
 
 logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s %(message)s", level=logging.INFO

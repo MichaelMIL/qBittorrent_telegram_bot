@@ -3,7 +3,6 @@
 import logging
 
 import qbittorrentapi
-from telegram.ext import ContextTypes
 
 from .config import QBIT
 from .storage import load_history, load_qbit_cache, save_qbit_cache
@@ -17,7 +16,7 @@ def qb() -> qbittorrentapi.Client:
     return client
 
 
-def get_tags(context: ContextTypes.DEFAULT_TYPE, client=None) -> list[str]:
+def get_tags(context, client=None) -> list[str]:
     """Fetch all tags and cache them so callback data can use indices."""
     client = client or qb()
     tags = sorted(client.torrents_tags())
@@ -25,7 +24,7 @@ def get_tags(context: ContextTypes.DEFAULT_TYPE, client=None) -> list[str]:
     return tags
 
 
-def get_categories(context: ContextTypes.DEFAULT_TYPE, client=None) -> list[str]:
+def get_categories(context, client=None) -> list[str]:
     """Fetch all categories and cache them so callback data can use indices."""
     client = client or qb()
     cats = sorted(client.torrents_categories())
