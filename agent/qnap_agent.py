@@ -11,6 +11,8 @@ Configure with environment variables or a .env file next to this script:
   QNAP_HOST, QNAP_PORT (8080), QNAP_USER, QNAP_PASSWORD, QNAP_SSL (0/1)
   WEBAPP_URL (e.g. http://192.168.50.20:8765), AGENT_TOKEN (same as the server)
   AGENT_NAME (qnap), INTERVAL_SECONDS (300), CHECKIN_SECONDS (5)
+  QNAP_TIMEOUT_SECONDS (20) per QNAP API call, HTTP_TIMEOUT_SECONDS (30) per
+  call to the web app
 
 Between reports the agent checks in with the web app every CHECKIN_SECONDS;
 when someone presses Refresh on the NAS page it reports immediately.
@@ -60,7 +62,7 @@ def collect() -> dict:
         env("QNAP_USER"),
         env("QNAP_PASSWORD"),
         verify_ssl=env("QNAP_SSL", "0") == "1",
-        timeout=20,
+        timeout=int(env("QNAP_TIMEOUT_SECONDS", "20") or 20),
     )
     stats = qnap.get_system_stats() or {}
     health = qnap.get_system_health()
@@ -135,9 +137,15 @@ def _server() -> tuple[str, dict]:
     return f"{url}/api/agents/{env('AGENT_NAME', 'qnap')}", {"X-Agent-Token": token}
 
 
+def _http_timeout() -> int:
+    return int(env("HTTP_TIMEOUT_SECONDS", "30") or 30)
+
+
 def post(report: dict) -> None:
     base, headers = _server()
-    r = requests.post(f"{base}/report", json={"report": report}, headers=headers, timeout=30)
+    r = requests.post(
+        f"{base}/report", json={"report": report}, headers=headers, timeout=_http_timeout()
+    )
     r.raise_for_status()
     log.info("reported: %s", r.json())
 
@@ -145,7 +153,7 @@ def post(report: dict) -> None:
 def refresh_requested() -> bool:
     """Ask the web app whether someone pressed Refresh since the last report."""
     base, headers = _server()
-    r = requests.get(f"{base}/poll", headers=headers, timeout=10)
+    r = requests.get(f"{base}/poll", headers=headers, timeout=_http_timeout())
     r.raise_for_status()
     return bool(r.json().get("refresh"))
 

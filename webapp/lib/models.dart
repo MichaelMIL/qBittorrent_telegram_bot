@@ -555,9 +555,20 @@ class NasView {
     : configured = j['configured'] == true,
       agents = [for (final a in jsonList(j['agents'])) NasAgent.fromJson(a)],
       usagePercent = _double(jsonMap(j['thresholds'])['usage_percent']),
-      diskTempC = _int(jsonMap(j['thresholds'])['disk_temp_c']);
+      diskTempC = _int(jsonMap(j['thresholds'])['disk_temp_c']),
+      refreshTimeoutSeconds = _or(jsonMap(j['refresh'])['timeout_seconds'], 45),
+      refreshPollSeconds = _or(jsonMap(j['refresh'])['poll_seconds'], 2),
+      pageReloadSeconds = _or(jsonMap(j['refresh'])['page_reload_seconds'], 60);
   final bool configured;
   final List<NasAgent> agents;
   final double usagePercent;
   final int diskTempC;
+
+  /// Refresh-now / auto-reload timing, configured in the server's .env.
+  final int refreshTimeoutSeconds;
+  final int refreshPollSeconds;
+  final int pageReloadSeconds;
+
+  static int _or(dynamic v, int fallback) =>
+      v is num && v > 0 ? v.round() : fallback;
 }

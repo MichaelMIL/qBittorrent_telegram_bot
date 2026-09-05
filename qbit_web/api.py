@@ -992,6 +992,12 @@ async def nas():
             "usage_percent": config.NAS_USAGE_ALERT_PERCENT,
             "disk_temp_c": config.NAS_DISK_TEMP_ALERT_C,
         },
+        "refresh": {
+            "timeout_seconds": config.NAS_REFRESH_TIMEOUT_SECONDS,
+            "poll_seconds": config.NAS_REFRESH_POLL_SECONDS,
+            "page_reload_seconds": config.NAS_PAGE_RELOAD_SECONDS,
+            "stale_after_minutes": config.AGENT_STALE_MINUTES,
+        },
     }
 
 

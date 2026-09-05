@@ -332,6 +332,12 @@ class FakeServer {
         return send({
           'configured': true,
           'thresholds': {'usage_percent': 90, 'disk_temp_c': 55},
+          'refresh': {
+            'timeout_seconds': 45,
+            'poll_seconds': 2,
+            'page_reload_seconds': 60,
+            'stale_after_minutes': 15,
+          },
           'agents': [
             {
               'name': 'qnap',

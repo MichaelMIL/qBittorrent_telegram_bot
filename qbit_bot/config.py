@@ -54,6 +54,12 @@ CACHE_MAX_WIDTH = int(os.environ.get("CACHE_MAX_WIDTH", "500"))  # px, posters
 # shared secret in an X-Agent-Token header; empty = agents disabled
 AGENT_TOKEN = os.environ.get("AGENT_TOKEN", "").strip()
 AGENT_STALE_MINUTES = int(os.environ.get("AGENT_STALE_MINUTES", "15"))
+# NAS page behaviour, handed to the app via /api/nas: how long "Refresh now"
+# waits for the agent, how often it polls while waiting, and how often the
+# page reloads by itself
+NAS_REFRESH_TIMEOUT_SECONDS = int(os.environ.get("NAS_REFRESH_TIMEOUT_SECONDS", "45"))
+NAS_REFRESH_POLL_SECONDS = int(os.environ.get("NAS_REFRESH_POLL_SECONDS", "2"))
+NAS_PAGE_RELOAD_SECONDS = int(os.environ.get("NAS_PAGE_RELOAD_SECONDS", "60"))
 NAS_USAGE_ALERT_PERCENT = int(os.environ.get("NAS_USAGE_ALERT_PERCENT", "90"))
 NAS_DISK_TEMP_ALERT_C = int(os.environ.get("NAS_DISK_TEMP_ALERT_C", "55"))
 CACHE_JPEG_QUALITY = int(os.environ.get("CACHE_JPEG_QUALITY", "82"))

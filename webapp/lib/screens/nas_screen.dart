@@ -26,11 +26,21 @@ class _NasScreenState extends State<NasScreen> {
   void initState() {
     super.initState();
     unawaited(_load());
+    _schedule(60);
+  }
+
+  /// (Re)arm the auto-reload with the period the server configured.
+  void _schedule(int seconds) {
+    if (_timer != null && _timer!.isActive && _period == seconds) return;
+    _timer?.cancel();
+    _period = seconds;
     _timer = Timer.periodic(
-      const Duration(seconds: 60),
+      Duration(seconds: seconds),
       (_) => unawaited(_load(silent: true)),
     );
   }
+
+  int _period = 60;
 
   @override
   void dispose() {
@@ -46,6 +56,7 @@ class _NasScreenState extends State<NasScreen> {
         _view = NasView.fromJson(data);
         _error = null;
       });
+      _schedule(_view!.pageReloadSeconds);
     } on ApiException catch (e) {
       if (!mounted) return;
       if (e.unauthorized) unawaited(AppScope.read(context).connect());
@@ -65,10 +76,12 @@ class _NasScreenState extends State<NasScreen> {
       if (mounted) setState(() => _refreshing = false);
       return;
     }
-    // the agent checks in every few seconds; give it up to 45 s
+    // the agent checks in every few seconds; wait as long as the server says
+    final poll = _view?.refreshPollSeconds ?? 2;
+    final rounds = ((_view?.refreshTimeoutSeconds ?? 45) / poll).ceil();
     var fresh = false;
-    for (var i = 0; i < 22 && mounted; i++) {
-      await Future<void>.delayed(const Duration(seconds: 2));
+    for (var i = 0; i < rounds && mounted; i++) {
+      await Future<void>.delayed(Duration(seconds: poll));
       await _load(silent: true);
       final agents = _view?.agents ?? const <NasAgent>[];
       fresh = agents.any((a) => a.receivedAt != before[a.name]);
