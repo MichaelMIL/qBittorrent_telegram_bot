@@ -244,19 +244,20 @@ posts a report every 5 minutes to the web app. On the server side set the same
 random `AGENT_TOKEN` in `.env` (plus, optionally, `NAS_USAGE_ALERT_PERCENT`,
 `NAS_DISK_TEMP_ALERT_C`, `AGENT_STALE_MINUTES`) and restart the bot.
 
-On the Mac:
+On the Mac, from a clone of this repo:
 
 ```bash
-mkdir ~/qnap-agent && cd ~/qnap-agent
-cp /path/to/repo/agent/{qnap_agent.py,requirements.txt,.env.example,com.qbit.qnap-agent.plist} .
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-cp .env.example .env      # QNAP_HOST/USER/PASSWORD, WEBAPP_URL, AGENT_TOKEN
-.venv/bin/python qnap_agent.py --once          # prints the report it would send
-.venv/bin/python qnap_agent.py --once --post   # sends one report
+cp agent/.env.example agent/.env   # QNAP_HOST/USER/PASSWORD, WEBAPP_URL, AGENT_TOKEN
+agent/install_mac.sh               # copies to ~/qnap-agent, venv, test report, launchd job
 ```
 
-To keep it running, edit the two paths in `com.qbit.qnap-agent.plist`, copy it
-to `~/Library/LaunchAgents/` and `launchctl load` it (log: `/tmp/qnap-agent.log`).
+`install_mac.sh` sends one test report before installing, then registers a
+launchd job that starts at login and restarts on failure (log:
+`/tmp/qnap-agent.log`). Re-run it to update; `--uninstall` removes the job;
+`--daemon` installs it system-wide (`sudo`) so it runs at boot without a login
+— handy if the Mac sits at the login screen after a reboot. Manual alternative:
+`python qnap_agent.py --once` prints the report it would send.
+
 The agent uses [python-qnapstats](https://github.com/colinodell/python-qnapstats)
 (the library behind Home Assistant's QNAP integration); a read-only QNAP user
 is enough. User logins see the NAS page only if the admin enables it.
