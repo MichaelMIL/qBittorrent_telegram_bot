@@ -100038,7 +100038,10 @@ a3=h.atR(a3,a2?B.e7:a7)
 a2=a3}a0.push(A.a5(A.i(a1)+" \xb0C",a7,a7,a7,a7,a2,a7,a7))}b2.push(A.c7(!1,a7,a7,a7,!0,a7,a7,a7,!0,a7,c,a7,a7,a7,a7,a7,!1,a7,a7,a7,a7,a7,a,a7,b,a7,A.cD(a0,B.dW,B.fx,B.W),a7))}l=b0.e
 b2.push(new A.fH("\ud83d\udce6 Volumes ("+l.length+")",a7))
 for(k=l.length,j=j.c,n=n.x,i=g.rx,g=g.k3,e=0;e<l.length;l.length===k||(0,A.p)(l),++e){a4=l[e]
-c=A.dO(A.b([new A.pJ(1,B.fd,A.a5(a4.a,a7,a7,a7,a7,n,a7,a7),a7),new A.GU(a4.b,a7)],m),B.L,B.B,B.W,0)
+c=A.b([new A.pJ(1,B.fd,A.a5(a4.a,a7,a7,a7,a7,n,a7,a7),a7)],m)
+b=a4.b
+if(b.length!==0)c.push(new A.GU(b,a7))
+c=A.dO(c,B.L,B.B,B.W,0)
 b=new A.az(6,6)
 a=a4.e
 a0=a==null

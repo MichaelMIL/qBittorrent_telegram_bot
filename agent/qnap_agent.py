@@ -20,6 +20,7 @@ when someone presses Refresh on the NAS page it reports immediately.
   python qnap_agent.py            # run forever
   python qnap_agent.py --once     # collect once, print the report, exit
   python qnap_agent.py --once --post   # collect once, post it, exit
+  python qnap_agent.py --raw      # dump the QNAP's raw volume/disk answers
 """
 
 import argparse
@@ -68,6 +69,7 @@ def collect() -> dict:
     health = qnap.get_system_health()
     disks = qnap.get_smart_disk_health() or {}
     volumes = qnap.get_volumes() or {}
+    statuses = volume_statuses(qnap)
 
     system = stats.get("system", {})
     up = stats.get("uptime", {})
@@ -116,7 +118,7 @@ def collect() -> dict:
             {
                 "label": label,
                 "id": v.get("id"),
-                "status": v.get("status"),
+                "status": statuses.get(str(v.get("id"))) or statuses.get(label) or v.get("status"),
                 "total_bytes": total,
                 "free_bytes": free,
                 "used_percent": used_percent,
@@ -127,6 +129,57 @@ def collect() -> dict:
             }
         )
     return report
+
+
+VOLUME_QUERY = "management/chartReq.cgi?chart_func=disk_usage&disk_select=all&include=all"
+STATUS_KEYS = ("volumeStatus", "volume_status", "status", "volumeState", "state")
+
+
+def volume_statuses(qnap) -> dict:
+    """volume id / label -> status text, read from the same chartReq answer
+    qnapstats uses for sizes (it doesn't expose the status itself). Empty
+    when the firmware doesn't include one."""
+    try:
+        raw = qnap._get_url(VOLUME_QUERY, force_list=("volume", "volumeUse", "folder_element"))
+    except Exception as e:  # noqa: BLE001 - never fail the report over this
+        log.debug("volume status lookup failed: %s", e)
+        return {}
+    out = {}
+    if not raw or not raw.get("volumeList"):
+        return out
+    for vol in raw["volumeList"].get("volume") or []:
+        if not isinstance(vol, dict):
+            continue
+        status = next((str(vol[k]) for k in STATUS_KEYS if vol.get(k) not in (None, "")), None)
+        if status is None:
+            continue
+        for key in (vol.get("volumeValue"), vol.get("volumeLabel")):
+            if key not in (None, ""):
+                out[str(key)] = status
+    return out
+
+
+def dump_raw() -> None:
+    """Print the QNAP's raw volume and disk answers (field names differ a bit
+    between firmware versions; this is what to send when something reads
+    'unknown')."""
+    from qnapstats import QNAPStats
+
+    qnap = QNAPStats(
+        env("QNAP_HOST"),
+        int(env("QNAP_PORT", "8080") or 8080),
+        env("QNAP_USER"),
+        env("QNAP_PASSWORD"),
+        verify_ssl=env("QNAP_SSL", "0") == "1",
+        timeout=int(env("QNAP_TIMEOUT_SECONDS", "20") or 20),
+    )
+    raw = qnap._get_url(VOLUME_QUERY, force_list=("volume", "volumeUse", "folder_element")) or {}
+    # sizes only — drop the per-folder lists, they are long and not in question
+    for vol in (raw.get("volumeUseList") or {}).get("volumeUse") or []:
+        vol.pop("folder_element", None)
+    print(json.dumps({"volumes": raw}, indent=1, default=str, ensure_ascii=False))
+    disks = qnap._get_url("disk/qsmart.cgi?func=all_hd_data", force_list=("entry",)) or {}
+    print(json.dumps({"disks": disks}, indent=1, default=str, ensure_ascii=False))
 
 
 def _server() -> tuple[str, dict]:
@@ -162,7 +215,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--once", action="store_true", help="collect once and exit")
     ap.add_argument("--post", action="store_true", help="with --once: also post the report")
+    ap.add_argument("--raw", action="store_true", help="dump the QNAP's raw volume/disk answers and exit")
     args = ap.parse_args()
+    if args.raw:
+        dump_raw()
+        return
     logging.basicConfig(format="%(asctime)s %(name)s %(levelname)s %(message)s", level=logging.INFO)
     interval = int(env("INTERVAL_SECONDS", "300") or 300)
     checkin = max(2, int(env("CHECKIN_SECONDS", "5") or 5))

@@ -282,7 +282,7 @@ class _AgentCard extends StatelessWidget {
                           style: theme.textTheme.titleSmall,
                         ),
                       ),
-                      _HealthChip(v.status),
+                      if (v.status.isNotEmpty) _HealthChip(v.status),
                     ],
                   ),
                   const SizedBox(height: 6),
