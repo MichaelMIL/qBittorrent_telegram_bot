@@ -78,8 +78,8 @@ everywhere.
   pause/resume/tags/category/delete, favorites with ⚡ auto-add and the
   default wizard, an **Activity** feed with every notification (new
   episodes with add buttons, completion pings with a Scan Plex button,
-  stuck alerts), Plex scans and all the settings. Optional password
-  (`WEB_PASSWORD`). See [Web app](#web-app)
+  stuck alerts), Plex scans and all the settings. Admin and user logins
+  (`ADMIN_PASSWORD` / `USER_PASSWORD`). See [Web app](#web-app)
 - **Private** — the bot only serves the Telegram user IDs in
   `ALLOWED_USER_IDS`; anyone else gets a rejection message that includes
   their own user id, so adding a trusted person is as easy as having them
@@ -191,9 +191,10 @@ machine that has Flutter whenever `webapp/` changes, and commit the result:
 # on the dev machine, after changing webapp/
 cd webapp && flutter build web && cd .. && git add webapp/build/web && git commit -m "Rebuild web app"
 
-# .env: set a password — without one, anyone on your network can control
-# qBittorrent through the app
-WEB_PASSWORD=something-long
+# .env: set the admin password — without one, anyone on your network can
+# control qBittorrent through the app; USER_PASSWORD is optional
+ADMIN_PASSWORD=something-long
+USER_PASSWORD=something-else
 
 python bot.py     # Telegram + web app on http://<mac-ip>:8765
 python web.py     # web app only (no BOT_TOKEN needed); runs the same
@@ -201,7 +202,13 @@ python web.py     # web app only (no BOT_TOKEN needed); runs the same
 ```
 
 Open `http://<mac-ip>:8765` from any browser on the LAN (add it to the phone's
-home screen — it's a PWA). `WEB_HOST`, `WEB_PORT` and `WEB_ENABLED=0` (to
+home screen — it's a PWA). Two logins share the one password field:
+`ADMIN_PASSWORD` sees and can do everything; `USER_PASSWORD` gets a restricted
+app — only the pages the admin enables in Settings → *User access* (by default
+New, Search and adding; Library, Favorites, Activity and Plex are off and
+Settings is never shown). The server enforces the same rules on its API. The
+login is remembered on the device; the small ⏏ Disconnect button (New tab's
+app bar, or the bottom of the rail) forgets it. `WEB_HOST`, `WEB_PORT` and `WEB_ENABLED=0` (to
 turn the server off in `bot.py`) are in `.env.example`, as are
 `SETTINGS_PASSWORD` (locks the Settings tab behind a second password) and
 `CACHE_CLEAR_HOURS` / `CACHE_MAX_MB` (posters are cached on disk in

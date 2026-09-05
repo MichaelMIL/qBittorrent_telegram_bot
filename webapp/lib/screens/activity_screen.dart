@@ -286,7 +286,9 @@ class EventCard extends StatelessWidget {
             Wrap(
               spacing: 8,
               children: [
-                if (e.type == 'completed' && !e.autoScan)
+                if (e.type == 'completed' &&
+                    !e.autoScan &&
+                    AppScope.of(context).can('plex'))
                   TextButton.icon(
                     icon: const Icon(Icons.movie_filter_outlined, size: 18),
                     label: const Text('Scan Plex now'),

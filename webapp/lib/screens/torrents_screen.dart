@@ -163,13 +163,14 @@ class _TorrentsScreenState extends State<TorrentsScreen> {
             ),
             onPressed: _pickFilter,
           ),
-          IconButton(
-            tooltip: 'Plex libraries',
-            icon: const Icon(Icons.movie_filter_outlined),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => const PlexScreen()),
+          if (AppScope.of(context).can('plex'))
+            IconButton(
+              tooltip: 'Plex libraries',
+              icon: const Icon(Icons.movie_filter_outlined),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const PlexScreen()),
+              ),
             ),
-          ),
           IconButton(
             tooltip: 'Refresh',
             icon: const Icon(Icons.refresh),

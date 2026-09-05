@@ -18,6 +18,17 @@ class FakeServer {
   };
   bool favAuto = false;
   bool settingsLocked = false; // SETTINGS_PASSWORD set on the server
+  String? userPassword = 'user'; // null = no USER_PASSWORD on the server
+  String get userToken => 'user-tok';
+  final Map<String, bool> userPages = {
+    'browse': true,
+    'search': true,
+    'add': true,
+    'library': false,
+    'favorites': false,
+    'activity': false,
+    'plex': false,
+  };
   int cacheClears = 0;
   String get settingsToken => 'settings-$password';
 
@@ -89,19 +100,43 @@ class FakeServer {
     if (path == '/api/auth') {
       return send({
         'required': true,
+        'user_login': userPassword != null,
         'settings_locked': settingsLocked,
-        'version': 1,
+        'version': 2,
       });
     }
     if (path == '/api/login') {
-      if (json['password'] != password) {
-        return send({'detail': 'Wrong password'}, status: 401);
+      if (json['password'] == password) {
+        return send({'token': token, 'role': 'admin'});
       }
-      return send({'token': token});
+      if (userPassword != null && json['password'] == userPassword) {
+        return send({'token': userToken, 'role': 'user'});
+      }
+      return send({'detail': 'Wrong password'}, status: 401);
     }
     final auth = req.headers.value('authorization') ?? '';
-    if (auth != 'Bearer $token' && req.uri.queryParameters['token'] != token) {
-      return send({'detail': 'Not authorized'}, status: 401);
+    final supplied = auth.startsWith('Bearer ')
+        ? auth.substring(7)
+        : (req.uri.queryParameters['token'] ?? '');
+    final role = supplied == token
+        ? 'admin'
+        : supplied == userToken
+        ? 'user'
+        : null;
+    if (role == null) return send({'detail': 'Not authorized'}, status: 401);
+    if (role == 'user') {
+      // the real server maps endpoint prefixes to pages; mirror the ones
+      // the tests touch
+      final adminOnly =
+          path.startsWith('/api/settings') ||
+          path.startsWith('/api/cookie') ||
+          path.startsWith('/api/cache');
+      final needsLibrary = path.startsWith('/api/torrents');
+      if (adminOnly || (needsLibrary && userPages['library'] != true)) {
+        return send({
+          'detail': "This page isn't enabled for the user login",
+        }, status: 403);
+      }
     }
 
     final unlocked =
@@ -141,6 +176,9 @@ class FakeServer {
           'settings': settings,
           'unread_events': 3,
           'settings_locked': settingsLocked,
+          'role': role,
+          'user_login': userPassword != null,
+          'user_pages': userPages,
           'cache': {
             'covers': 7,
             'bytes': 123456,
@@ -164,6 +202,13 @@ class FakeServer {
       case ('PATCH', '/api/settings'):
         if (!unlocked) {
           return send({'detail': 'Settings are locked'}, status: 403);
+        }
+        if (json['key'] == 'user_pages') {
+          for (final e in (json['value'] as Map).entries) {
+            userPages['${e.key}'] = e.value == true;
+          }
+          settings['user_pages'] = userPages;
+          return send({'settings': settings});
         }
         settings[json['key'] as String] = json['value'];
         return send({'settings': settings});

@@ -141,6 +141,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   static int _int(dynamic v) => v is num ? v.round() : 0;
 
+  /// (permission key, title, subtitle) for the user-access switches.
+  static const _userPageRows = [
+    ('browse', 'New on HeBits', 'Newest series and movies as poster tiles'),
+    ('search', 'Search', 'Search HeBits and open detail cards'),
+    ('add', 'Add torrents', 'Add releases, magnets and .torrent files'),
+    ('library', 'Library', 'See and manage everything in qBittorrent'),
+    ('favorites', 'Favorites', 'Starred series, auto-add and defaults'),
+    ('activity', 'Activity', 'The notification feed'),
+    ('plex', 'Plex', 'Trigger library scans'),
+  ];
+
   static String _cacheSubtitle(Status? status) {
     if (status == null) return '';
     final every = status.cacheClearEveryHours;
@@ -375,6 +386,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ],
                   ),
 
+                  const SectionTitle('👤 User access'),
+                  if (status != null && !status.userLogin)
+                    const ListTile(
+                      leading: Icon(Icons.info_outline),
+                      title: Text('No user login configured'),
+                      subtitle: Text(
+                        'Set USER_PASSWORD next to ADMIN_PASSWORD in the '
+                        "server's .env to give someone a restricted login; "
+                        'the switches below then decide what they see.',
+                      ),
+                    ),
+                  for (final (page, title, subtitle) in _userPageRows)
+                    SwitchListTile(
+                      title: Text(title),
+                      subtitle: Text(subtitle),
+                      value: status?.userPages[page] ?? false,
+                      onChanged: (v) => _set('user_pages', {page: v}),
+                    ),
+
                   const SectionTitle('🧰 Maintenance'),
                   ListTile(
                     leading: const Icon(Icons.sync),
@@ -441,8 +471,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     leading: const Icon(Icons.dns_outlined),
                     title: Text(state.api.baseUrl),
                     subtitle: Text(
-                      '${state.authRequired ? 'Password protected' : 'No password set (WEB_PASSWORD)'}'
-                      ' · settings lock ${state.settingsLocked ? 'on (SETTINGS_PASSWORD)' : 'off (SETTINGS_PASSWORD empty)'}',
+                      '${state.authRequired ? 'Logged in as ${state.role}' : 'No login (ADMIN_PASSWORD empty)'}'
+                      ' · settings lock ${state.settingsLocked ? 'on' : 'off'}',
                     ),
                     trailing: TextButton(
                       onPressed: () async {

@@ -80,6 +80,19 @@ class AppState extends ChangeNotifier {
   /// Whether the Settings tab may be shown right now.
   bool get settingsUnlocked => !settingsLocked || api.settingsToken.isNotEmpty;
 
+  /// Role of this session ('admin' when the server has no login at all).
+  String get role => status?.role ?? 'admin';
+  bool get isAdmin => role == 'admin';
+
+  /// Whether this session may open [page] ('browse', 'search', 'add',
+  /// 'library', 'favorites', 'activity', 'plex', 'settings'). Admins may open
+  /// everything; users only what the admin enabled.
+  bool can(String page) {
+    if (isAdmin) return true;
+    if (page == 'settings') return false;
+    return status?.userPages[page] ?? false;
+  }
+
   Future<void> unlockSettings(String password) async {
     final res = await api.post('/api/settings/unlock', {'password': password});
     api.settingsToken = '${res['token'] ?? ''}';

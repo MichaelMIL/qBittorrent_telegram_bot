@@ -51,12 +51,16 @@ class _Root extends StatelessWidget {
 class _Destination {
   const _Destination(
     this.label,
+    this.page,
     this.icon,
     this.selectedIcon,
     this.builder, {
     this.mobile = true,
   });
   final String label;
+
+  /// Permission key (see AppState.can).
+  final String page;
   final IconData icon;
   final IconData selectedIcon;
   final WidgetBuilder builder;
@@ -69,12 +73,14 @@ final _destinations = <_Destination>[
   // bar) and is a rail item on wide screens.
   _Destination(
     'Browse',
+    'browse',
     Icons.explore_outlined,
     Icons.explore,
     (_) => const BrowseScreen(),
   ),
   _Destination(
     'Search',
+    'search',
     Icons.search,
     Icons.search,
     (_) => const SearchScreen(),
@@ -82,24 +88,28 @@ final _destinations = <_Destination>[
   ),
   _Destination(
     'Library',
+    'library',
     Icons.download_outlined,
     Icons.download,
     (_) => const TorrentsScreen(),
   ),
   _Destination(
     'Favorites',
+    'favorites',
     Icons.star_border,
     Icons.star,
     (_) => const FavoritesScreen(),
   ),
   _Destination(
     'Activity',
+    'activity',
     Icons.notifications_none,
     Icons.notifications,
     (_) => const ActivityScreen(),
   ),
   _Destination(
     'Plex',
+    'plex',
     Icons.movie_filter_outlined,
     Icons.movie_filter,
     (_) => const PlexScreen(),
@@ -107,6 +117,7 @@ final _destinations = <_Destination>[
   ),
   _Destination(
     'Settings',
+    'settings',
     Icons.settings_outlined,
     Icons.settings,
     (_) => const SettingsScreen(),
@@ -129,13 +140,47 @@ class _ShellState extends State<Shell> {
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 840;
-    final unread = AppScope.of(context).status?.unreadEvents ?? 0;
+    final state = AppScope.of(context);
+    final unread = state.status?.unreadEvents ?? 0;
+    // user logins only get the pages the admin enabled
+    final allowed = [
+      for (final d in _destinations)
+        if (state.can(d.page)) d,
+    ];
     final visible = wide
-        ? _destinations
+        ? allowed
         : [
-            for (final d in _destinations)
+            for (final d in allowed)
               if (d.mobile) d,
           ];
+    if (visible.isEmpty) {
+      return Scaffold(
+        appBar: AppBar(
+          actions: [
+            IconButton(
+              tooltip: 'Disconnect',
+              icon: const Icon(Icons.logout),
+              onPressed: state.logout,
+            ),
+          ],
+        ),
+        body: const Center(
+          child: Padding(
+            padding: EdgeInsets.all(32),
+            child: Text(
+              'No pages are enabled for the user login. Ask the admin to '
+              'enable some in Settings → User access.',
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      );
+    }
+    // a page this login may not open (or that just got disabled) falls back
+    // to the first allowed one; bar-less pages like Search stay reachable
+    if (!allowed.contains(_destinations[_index])) {
+      _index = _destinations.indexOf(allowed.first);
+    }
     final current = _destinations[_index];
     final selected = visible.indexOf(current).clamp(0, visible.length - 1);
 
@@ -179,6 +224,19 @@ class _ShellState extends State<Shell> {
                     height: 40,
                   ),
                 ),
+                trailing: Expanded(
+                  child: Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: IconButton(
+                        tooltip: 'Disconnect',
+                        icon: const Icon(Icons.logout, size: 20),
+                        onPressed: state.logout,
+                      ),
+                    ),
+                  ),
+                ),
                 destinations: [
                   for (final d in visible)
                     NavigationRailDestination(
@@ -199,19 +257,22 @@ class _ShellState extends State<Shell> {
       goTo: _goTo,
       child: Scaffold(
         body: body,
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: selected,
-          onDestinationSelected: (i) =>
-              setState(() => _index = _destinations.indexOf(visible[i])),
-          destinations: [
-            for (final d in visible)
-              NavigationDestination(
-                icon: iconFor(d, active: false),
-                selectedIcon: iconFor(d, active: true),
-                label: d.label,
+        // NavigationBar needs at least two destinations
+        bottomNavigationBar: visible.length < 2
+            ? null
+            : NavigationBar(
+                selectedIndex: selected,
+                onDestinationSelected: (i) =>
+                    setState(() => _index = _destinations.indexOf(visible[i])),
+                destinations: [
+                  for (final d in visible)
+                    NavigationDestination(
+                      icon: iconFor(d, active: false),
+                      selectedIcon: iconFor(d, active: true),
+                      label: d.label,
+                    ),
+                ],
               ),
-          ],
-        ),
       ),
     );
   }

@@ -210,11 +210,12 @@ class _BrowseScreenState extends State<BrowseScreen> {
             ),
             onPressed: cur.genres.isEmpty ? null : _pickGenre,
           ),
-          IconButton(
-            tooltip: 'Search HeBits',
-            icon: const Icon(Icons.search),
-            onPressed: () => ShellNav.maybeOf(context)?.goTo('Search'),
-          ),
+          if (AppScope.of(context).can('search'))
+            IconButton(
+              tooltip: 'Search HeBits',
+              icon: const Icon(Icons.search),
+              onPressed: () => ShellNav.maybeOf(context)?.goTo('Search'),
+            ),
           IconButton(
             tooltip: 'Reload',
             icon: cur.busy
@@ -225,6 +226,12 @@ class _BrowseScreenState extends State<BrowseScreen> {
                   )
                 : const Icon(Icons.refresh),
             onPressed: () => _refresh(_cat),
+          ),
+          IconButton(
+            tooltip: 'Disconnect',
+            iconSize: 18,
+            icon: const Icon(Icons.logout),
+            onPressed: AppScope.read(context).logout,
           ),
         ],
         bottom: PreferredSize(

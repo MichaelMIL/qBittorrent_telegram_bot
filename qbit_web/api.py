@@ -66,12 +66,85 @@ log = logging.getLogger("qbit-web")
 
 # ------------------------------------------------------------------ auth
 
-def _token_for(password: str) -> str:
-    return hashlib.sha256(f"qbit-web:{password}".encode()).hexdigest()
+ADMIN, USER = "admin", "user"
+
+
+def _token_for(secret: str) -> str:
+    return hashlib.sha256(f"qbit-web:{secret}".encode()).hexdigest()
 
 
 def auth_required() -> bool:
-    return bool(config.WEB_PASSWORD)
+    return bool(config.ADMIN_PASSWORD)
+
+
+def _role_tokens() -> dict[str, str]:
+    """token -> role for every configured login."""
+    tokens = {}
+    if config.ADMIN_PASSWORD:
+        tokens[_token_for(f"admin:{config.ADMIN_PASSWORD}")] = ADMIN
+        if config.USER_PASSWORD:
+            tokens[_token_for(f"user:{config.USER_PASSWORD}")] = USER
+    return tokens
+
+
+def role_of(token: str | None) -> str | None:
+    if not token:
+        return None
+    for known, role in _role_tokens().items():
+        if hmac.compare_digest(token, known):
+            return role
+    return None
+
+
+def user_pages() -> dict:
+    """Pages a user login may open (admin-editable in Settings)."""
+    stored = load_settings().get("user_pages") or {}
+    return {k: bool(stored.get(k, config.DEFAULT_SETTINGS["user_pages"][k])) for k in config.USER_PAGE_KEYS}
+
+
+# which endpoint prefixes a page unlocks for a user login; anything not listed
+# here (settings, cookie, cache) is admin-only
+_PAGE_PATHS = {
+    "browse": ("/api/browse",),
+    "search": ("/api/search", "/api/group"),
+    "add": ("/api/add", "/api/tags", "/api/categories", "/api/defaults"),
+    "library": ("/api/torrents", "/api/tags", "/api/categories", "/api/refresh", "/api/history"),
+    "favorites": ("/api/favorites", "/api/defaults", "/api/group"),
+    "activity": ("/api/events", "/api/group"),
+    "plex": ("/api/plex",),
+}
+_ALWAYS = ("/api/status", "/api/cover")
+
+
+def _user_may(path: str, pages: dict) -> bool:
+    if path.startswith(_ALWAYS):
+        return True
+    return any(
+        pages.get(page) and path.startswith(prefixes)
+        for page, prefixes in _PAGE_PATHS.items()
+    )
+
+
+async def require_auth(request: Request, token: str | None = Query(default=None)) -> str:
+    """Bearer token (or ?token= for <img> URLs). Returns the role; for user
+    logins also enforces the admin's page permissions. Without
+    ADMIN_PASSWORD everyone is admin."""
+    if not auth_required():
+        return ADMIN
+    header = request.headers.get("authorization", "")
+    supplied = header[7:] if header.lower().startswith("bearer ") else token
+    role = role_of(supplied)
+    if role is None:
+        raise HTTPException(401, "Not authorized")
+    if role == USER and not _user_may(request.url.path, user_pages()):
+        raise HTTPException(403, "This page isn't enabled for the user login")
+    return role
+
+
+async def require_admin(role: str = Depends(require_auth)) -> str:
+    if role != ADMIN:
+        raise HTTPException(403, "Admins only")
+    return role
 
 
 def settings_locked() -> bool:
@@ -82,24 +155,14 @@ def _settings_token() -> str:
     return _token_for(f"settings:{config.SETTINGS_PASSWORD}")
 
 
-async def require_settings(request: Request):
-    """Second factor for the Settings tab: an X-Settings-Token header derived
-    from SETTINGS_PASSWORD (obtained via POST /api/settings/unlock)."""
+async def require_settings(request: Request, role: str = Depends(require_admin)):
+    """Settings changes: admin role, plus the optional SETTINGS_PASSWORD second
+    factor (an X-Settings-Token header from POST /api/settings/unlock)."""
     if not settings_locked():
         return
     supplied = request.headers.get("x-settings-token", "")
     if not supplied or not hmac.compare_digest(supplied, _settings_token()):
         raise HTTPException(403, "Settings are locked — enter the settings password")
-
-
-async def require_auth(request: Request, token: str | None = Query(default=None)):
-    """Bearer token (or ?token= for <img> URLs) derived from WEB_PASSWORD."""
-    if not auth_required():
-        return
-    header = request.headers.get("authorization", "")
-    supplied = header[7:] if header.lower().startswith("bearer ") else token
-    if not supplied or not hmac.compare_digest(supplied, _token_for(config.WEB_PASSWORD)):
-        raise HTTPException(401, "Not authorized")
 
 
 public = APIRouter(prefix="/api")
@@ -108,7 +171,12 @@ router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 
 @public.get("/auth")
 async def auth_info():
-    return {"required": auth_required(), "settings_locked": settings_locked(), "version": 1}
+    return {
+        "required": auth_required(),
+        "user_login": bool(config.ADMIN_PASSWORD and config.USER_PASSWORD),
+        "settings_locked": settings_locked(),
+        "version": 2,
+    }
 
 
 class LoginBody(BaseModel):
@@ -117,15 +185,18 @@ class LoginBody(BaseModel):
 
 @public.post("/login")
 async def login(body: LoginBody):
+    """One password field, two roles: the admin password or the user password."""
     if not auth_required():
-        return {"token": ""}
-    if not hmac.compare_digest(body.password, config.WEB_PASSWORD):
-        await asyncio.sleep(0.5)  # slow down guessing
-        raise HTTPException(401, "Wrong password")
-    return {"token": _token_for(config.WEB_PASSWORD)}
+        return {"token": "", "role": ADMIN}
+    if hmac.compare_digest(body.password, config.ADMIN_PASSWORD):
+        return {"token": _token_for(f"admin:{config.ADMIN_PASSWORD}"), "role": ADMIN}
+    if config.USER_PASSWORD and hmac.compare_digest(body.password, config.USER_PASSWORD):
+        return {"token": _token_for(f"user:{config.USER_PASSWORD}"), "role": USER}
+    await asyncio.sleep(0.5)  # slow down guessing
+    raise HTTPException(401, "Wrong password")
 
 
-@router.post("/settings/unlock")
+@router.post("/settings/unlock", dependencies=[Depends(require_admin)])
 async def settings_unlock(body: LoginBody):
     if not settings_locked():
         return {"token": ""}
@@ -208,7 +279,7 @@ def _create_category(name: str) -> None:
 # ------------------------------------------------------------------ status
 
 @router.get("/status")
-async def status():
+async def status(role: str = Depends(require_auth)):
     settings = load_settings()
     try:
         import json
@@ -236,6 +307,9 @@ async def status():
         "unread_events": sum(1 for e in load_events() if not e.get("read")),
         "cache": covers.stats(),
         "settings_locked": settings_locked(),
+        "role": role,
+        "user_pages": user_pages(),
+        "user_login": bool(config.ADMIN_PASSWORD and config.USER_PASSWORD),
     }
 
 
@@ -786,13 +860,14 @@ SETTING_CHOICES = {
 }
 
 
-@router.get("/settings")
+@router.get("/settings", dependencies=[Depends(require_admin)])
 async def get_settings():
     return {
         "settings": load_settings(),
         "choices": {k: list(v) for k, v in SETTING_CHOICES.items()},
         "resolutions": list(RES_CHOICES),
         "hebits_cats": HEBITS_CATS,
+        "user_page_keys": list(config.USER_PAGE_KEYS),
     }
 
 
@@ -812,6 +887,14 @@ async def patch_setting(body: SettingPatch):
             raise HTTPException(400, f"Allowed values: {SETTING_CHOICES[body.key]}")
     elif body.key == "auto_plex_scan":
         value = bool(body.value)
+    elif body.key == "user_pages":
+        if not isinstance(body.value, dict):
+            raise HTTPException(400, "user_pages must be an object {page: bool}")
+        value = user_pages()
+        for page, on in body.value.items():
+            if page not in config.USER_PAGE_KEYS:
+                raise HTTPException(400, f"Unknown page {page!r}")
+            value[page] = bool(on)
     elif body.key == "plex_map":
         if not isinstance(body.value, dict):
             raise HTTPException(400, "plex_map must be an object {category: libraryKey}")
@@ -830,7 +913,7 @@ async def patch_setting(body: SettingPatch):
 
 # ------------------------------------------------------------------ cookie
 
-@router.get("/cookie")
+@router.get("/cookie", dependencies=[Depends(require_admin)])
 async def cookie_status():
     if not config.HEBITS_COOKIE:
         return {"configured": False, "valid": False, "user": None}

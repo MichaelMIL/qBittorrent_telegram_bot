@@ -86,6 +86,10 @@ class _GroupScreenState extends State<GroupScreen> {
   }
 
   Future<void> _add(Release t) async {
+    if (!AppScope.read(context).can('add')) {
+      showSnack(context, 'Adding torrents is not enabled for this login.');
+      return;
+    }
     final added = await startAdd(
       context,
       AddSource.hebits(
@@ -163,11 +167,16 @@ class _GroupScreenState extends State<GroupScreen> {
                           mode: LaunchMode.externalApplication,
                         ),
                       ),
-                    FilledButton.tonalIcon(
-                      icon: Icon(g.favorite ? Icons.star : Icons.star_border),
-                      label: Text(g.favorite ? 'Favorite' : 'Add to favorites'),
-                      onPressed: _toggleFavorite,
-                    ),
+                    if (AppScope.of(context).can('favorites'))
+                      FilledButton.tonalIcon(
+                        icon: Icon(
+                          g.favorite ? Icons.star : Icons.star_border,
+                        ),
+                        label: Text(
+                          g.favorite ? 'Favorite' : 'Add to favorites',
+                        ),
+                        onPressed: _toggleFavorite,
+                      ),
                   ],
                 ),
               ],

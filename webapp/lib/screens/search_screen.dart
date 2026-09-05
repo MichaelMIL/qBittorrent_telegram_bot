@@ -77,11 +77,12 @@ class _SearchScreenState extends State<SearchScreen> {
           onChanged: (_) => setState(() {}),
         ),
         actions: [
-          IconButton(
-            tooltip: 'New on HeBits',
-            icon: const Icon(Icons.explore_outlined),
-            onPressed: () => ShellNav.maybeOf(context)?.goTo('Browse'),
-          ),
+          if (AppScope.of(context).can('browse'))
+            IconButton(
+              tooltip: 'New on HeBits',
+              icon: const Icon(Icons.explore_outlined),
+              onPressed: () => ShellNav.maybeOf(context)?.goTo('Browse'),
+            ),
           IconButton(
             tooltip: 'Search',
             icon: const Icon(Icons.search),
@@ -136,12 +137,14 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        heroTag: 'search-add',
-        onPressed: () => addManually(context),
-        icon: const Icon(Icons.add),
-        label: const Text('Magnet / .torrent'),
-      ),
+      floatingActionButton: AppScope.of(context).can('add')
+          ? FloatingActionButton.extended(
+              heroTag: 'search-add',
+              onPressed: () => addManually(context),
+              icon: const Icon(Icons.add),
+              label: const Text('Magnet / .torrent'),
+            )
+          : null,
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null

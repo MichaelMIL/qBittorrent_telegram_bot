@@ -35,7 +35,14 @@ PLEX_TOKEN = os.environ.get("PLEX_TOKEN", "").strip()
 WEB_ENABLED = os.environ.get("WEB_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
 WEB_HOST = os.environ.get("WEB_HOST", "0.0.0.0").strip()
 WEB_PORT = int(os.environ.get("WEB_PORT", "8765"))
-WEB_PASSWORD = os.environ.get("WEB_PASSWORD", "").strip()  # empty = no login
+# two logins for the web app: admin sees everything, user only the pages the
+# admin enables in Settings. ADMIN_PASSWORD empty = no login at all (everyone
+# is admin); WEB_PASSWORD is the old name for ADMIN_PASSWORD.
+ADMIN_PASSWORD = (
+    os.environ.get("ADMIN_PASSWORD", "").strip() or os.environ.get("WEB_PASSWORD", "").strip()
+)
+USER_PASSWORD = os.environ.get("USER_PASSWORD", "").strip()
+WEB_PASSWORD = ADMIN_PASSWORD  # backwards-compatible alias
 # second password just for the web app's Settings tab (empty = settings open)
 SETTINGS_PASSWORD = os.environ.get("SETTINGS_PASSWORD", "").strip()
 # poster cache (data/covers): re-encoded JPEGs, LRU-evicted above CACHE_MAX_MB,
@@ -56,7 +63,18 @@ DEFAULT_SETTINGS = {
     "stall_alert_hours": 6,     # 0 = stuck-download alerts off
     "auto_plex_scan": False,    # scan Plex automatically after a download
     "plex_map": {},             # qBittorrent category -> Plex section key
+    # pages a "user" login may open (admin sets these in Settings)
+    "user_pages": {
+        "browse": True,
+        "search": True,
+        "add": True,        # may add releases to qBittorrent
+        "library": False,
+        "favorites": False,
+        "activity": False,
+        "plex": False,
+    },
 }
+USER_PAGE_KEYS = ("browse", "search", "add", "library", "favorites", "activity", "plex")
 INTERVAL_CHOICES = (1, 2, 3, 6, 12, 24)
 WATCH_POLL_CHOICES = (15, 30, 60, 120)
 STALL_ALERT_CHOICES = (0, 3, 6, 12, 24)

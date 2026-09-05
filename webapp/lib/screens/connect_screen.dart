@@ -101,8 +101,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       decoration: InputDecoration(
                         labelText: 'Password',
                         helperText: state.authRequired
-                            ? "WEB_PASSWORD from the server's .env"
-                            : 'Leave empty if the server has no WEB_PASSWORD',
+                            ? 'Admin or user password (ADMIN_PASSWORD / '
+                                  "USER_PASSWORD in the server's .env)"
+                            : 'Leave empty if the server has no ADMIN_PASSWORD',
                         prefixIcon: const Icon(Icons.lock_outline),
                         border: const OutlineInputBorder(),
                       ),

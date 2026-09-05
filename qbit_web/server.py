@@ -86,10 +86,10 @@ def urls() -> list[str]:
 
 
 def _warn_if_open() -> None:
-    if not config.WEB_PASSWORD and config.WEB_HOST not in ("127.0.0.1", "localhost"):
+    if not config.ADMIN_PASSWORD and config.WEB_HOST not in ("127.0.0.1", "localhost"):
         log.warning(
-            "WEB_PASSWORD is empty — anyone on your network can control qBittorrent "
-            "through the web app. Set WEB_PASSWORD in .env."
+            "ADMIN_PASSWORD is empty — anyone on your network can control qBittorrent "
+            "through the web app. Set ADMIN_PASSWORD (and USER_PASSWORD) in .env."
         )
 
 

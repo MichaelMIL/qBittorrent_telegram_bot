@@ -210,6 +210,60 @@ void main() {
     await finish(tester, state);
   });
 
+  testWidgets('user login sees only the enabled pages and can disconnect', (
+    tester,
+  ) async {
+    final state = await boot(tester, server);
+    expect(find.text('Connect'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).last, 'user');
+    await tester.tap(find.text('Connect'));
+    await settle(tester);
+    expect(state.connected, isTrue);
+    expect(state.role, 'user');
+
+    // phone bar: Browse only (search is an icon), no Library/Settings
+    expectVisible(find.text('🆕 New on HeBits'));
+    expect(find.text('Library'), findsNothing);
+    expect(find.text('Favorites'), findsNothing);
+    expect(find.text('Settings'), findsNothing);
+    expect(find.byTooltip('Search HeBits'), findsOneWidget);
+
+    // detail card: no favorites button, but adding is allowed
+    await settle(tester);
+    await tester.tap(find.text('Series Pick 1 (2025)'));
+    await settle(tester);
+    expect(find.text('Add to favorites'), findsNothing);
+    expect(find.text('Favorite'), findsNothing);
+    await tester.pageBack();
+    await settle(tester);
+    await tester.pump(const Duration(seconds: 1)); // route transition done
+
+    await tester.tap(find.widgetWithIcon(IconButton, Icons.logout));
+    await settle(tester);
+    expect(state.connected, isFalse);
+    expect(find.text('Connect'), findsOneWidget);
+    await finish(tester, state);
+  });
+
+  testWidgets('admin toggles user pages in Settings', (tester) async {
+    final state = await boot(tester, server, size: const Size(390, 1800));
+    await login(tester, state, server);
+    expect(state.role, 'admin');
+    await tester.tap(find.text('Settings'));
+    await settle(tester);
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.scrollUntilVisible(
+      find.widgetWithText(SwitchListTile, 'Library'),
+      200,
+    );
+    await tester.tap(find.widgetWithText(SwitchListTile, 'Library'));
+    await settle(tester);
+    expect(server.userPages['library'], isTrue);
+    expect(server.calls, contains('PATCH /api/settings'));
+    await finish(tester, state);
+  });
+
   testWidgets(
     'wide layout uses a rail with Plex; Plex screen lists libraries',
     (tester) async {

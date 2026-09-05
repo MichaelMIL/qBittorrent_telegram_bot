@@ -397,6 +397,12 @@ class Status {
       unreadEvents = _int(j['unread_events']),
       settings = AppSettings.fromJson(jsonMap(j['settings'])),
       settingsLocked = j['settings_locked'] == true,
+      role = _str(j['role']).isEmpty ? 'admin' : _str(j['role']),
+      userLogin = j['user_login'] == true,
+      userPages = {
+        for (final e in jsonMap(j['user_pages']).entries)
+          e.key: e.value == true,
+      },
       cacheCovers = _int(jsonMap(j['cache'])['covers']),
       cacheBytes = _int(jsonMap(j['cache'])['bytes']),
       cacheMaxBytes = _int(jsonMap(j['cache'])['max_bytes']),
@@ -418,6 +424,15 @@ class Status {
   final String qbit;
   final AppSettings settings;
   final bool settingsLocked;
+
+  /// 'admin' or 'user' — which password this session logged in with.
+  final String role;
+
+  /// Whether the server has a USER_PASSWORD (so user access matters).
+  final bool userLogin;
+
+  /// Pages a user login may open, as set by the admin in Settings.
+  final Map<String, bool> userPages;
   final int cacheCovers;
   final int cacheBytes;
   final int cacheMaxBytes;
