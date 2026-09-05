@@ -35,6 +35,8 @@ from qbit_bot.plex import PlexError, plex_refresh, plex_sections
 from qbit_bot.qbit import decorate_local_status, fetch_qbit_torrents, qb
 from qbit_bot.storage import (
     add_watch,
+    request_agent_refresh,
+    take_agent_refresh,
     load_events,
     load_favorites,
     load_history,
@@ -948,15 +950,37 @@ class AgentReport(BaseModel):
 async def agent_report(name: str, body: AgentReport, request: Request):
     """Intake for external agents (agent/qnap_agent.py). Authenticated by the
     shared AGENT_TOKEN header, not by a web login."""
+    _check_agent_token(request)
+    name = name.strip().lower()
+    if not name or not name.replace("-", "").replace("_", "").isalnum():
+        raise HTTPException(400, "Agent name must be alphanumeric")
+    return await agents.ingest(name, body.report)
+
+
+def _check_agent_token(request: Request) -> None:
     if not config.AGENT_TOKEN:
         raise HTTPException(503, "Agents are disabled — set AGENT_TOKEN in .env")
     supplied = request.headers.get("x-agent-token", "")
     if not supplied or not hmac.compare_digest(supplied, config.AGENT_TOKEN):
         raise HTTPException(401, "Bad agent token")
-    name = name.strip().lower()
-    if not name or not name.replace("-", "").replace("_", "").isalnum():
-        raise HTTPException(400, "Agent name must be alphanumeric")
-    return await agents.ingest(name, body.report)
+
+
+@public.get("/agents/{name}/poll")
+async def agent_poll(name: str, request: Request):
+    """Agents call this between reports; `refresh: true` means someone
+    pressed Refresh in the app and a report should be sent right away."""
+    _check_agent_token(request)
+    return {"refresh": take_agent_refresh(name.strip().lower())}
+
+
+@router.post("/nas/refresh")
+async def nas_refresh():
+    """Ask every agent for a fresh report now (answered within its check-in
+    interval, a few seconds, if the agent is running)."""
+    names = request_agent_refresh()
+    if not names:
+        raise HTTPException(404, "No agent has reported yet")
+    return {"requested": names}
 
 
 @router.get("/nas")

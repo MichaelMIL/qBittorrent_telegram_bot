@@ -538,11 +538,13 @@ class NasAgent {
     : name = _str(j['name']),
       receivedAt = DateTime.tryParse(_str(j['received_at']))?.toLocal(),
       online = j['online'] == true,
+      refreshPending = j['refresh_pending'] == true,
       alerts = stringList(j['alerts']),
       report = NasReport.fromJson(jsonMap(j['report']));
   final String name;
   final DateTime? receivedAt;
   final bool online;
+  final bool refreshPending;
   final List<String> alerts;
   final NasReport report;
 }

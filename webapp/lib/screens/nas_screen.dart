@@ -20,6 +20,7 @@ class _NasScreenState extends State<NasScreen> {
   NasView? _view;
   String? _error;
   Timer? _timer;
+  bool _refreshing = false; // asked the agent, waiting for its report
 
   @override
   void initState() {
@@ -52,13 +53,58 @@ class _NasScreenState extends State<NasScreen> {
     }
   }
 
+  /// Ask the agent(s) for a fresh report and wait for it to arrive.
+  Future<void> _refreshNow() async {
+    final state = AppScope.read(context);
+    final before = {
+      for (final a in _view?.agents ?? <NasAgent>[]) a.name: a.receivedAt,
+    };
+    setState(() => _refreshing = true);
+    final ok = await guard(context, () => state.api.post('/api/nas/refresh'));
+    if (ok == null) {
+      if (mounted) setState(() => _refreshing = false);
+      return;
+    }
+    // the agent checks in every few seconds; give it up to 45 s
+    var fresh = false;
+    for (var i = 0; i < 22 && mounted; i++) {
+      await Future<void>.delayed(const Duration(seconds: 2));
+      await _load(silent: true);
+      final agents = _view?.agents ?? const <NasAgent>[];
+      fresh = agents.any((a) => a.receivedAt != before[a.name]);
+      if (fresh) break;
+    }
+    if (!mounted) return;
+    setState(() => _refreshing = false);
+    showSnack(
+      context,
+      fresh
+          ? '✅ Fresh report received.'
+          : "⏳ The agent hasn't answered yet — is it running? The request "
+                'stays queued; the page updates when the report lands.',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final view = _view;
+    final hasAgents = view != null && view.agents.isNotEmpty;
     return Scaffold(
       appBar: AppBar(
         title: const Text('🗄 NAS'),
         actions: [
+          if (hasAgents)
+            TextButton.icon(
+              onPressed: _refreshing ? null : _refreshNow,
+              icon: _refreshing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.sync, size: 18),
+              label: Text(_refreshing ? 'Waiting for agent…' : 'Refresh now'),
+            ),
           IconButton(
             tooltip: 'Reload',
             icon: const Icon(Icons.refresh),
@@ -121,6 +167,7 @@ class _AgentCard extends StatelessWidget {
         : agent.alerts.isEmpty
         ? 'healthy · reported ${fmtAgo(agent.receivedAt!)}'
         : '${agent.alerts.length} alert${agent.alerts.length == 1 ? '' : 's'} · reported ${fmtAgo(agent.receivedAt!)}';
+    final pending = agent.refreshPending ? ' · refresh requested' : '';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -135,7 +182,7 @@ class _AgentCard extends StatelessWidget {
               ].join(' · '),
               style: theme.textTheme.titleMedium,
             ),
-            subtitle: Text(statusText),
+            subtitle: Text('$statusText$pending'),
           ),
         ),
         if (!r.ok)

@@ -257,9 +257,35 @@ def save_agent_report(name: str, report: dict) -> dict:
         entry = agents.setdefault(name, {})
         entry["received_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         entry["report"] = report
+        entry.pop("refresh_requested", None)
         entry.setdefault("alerts", {})
         _save(AGENTS_PATH, agents)
         return entry
+
+
+def request_agent_refresh(name: str | None = None) -> list[str]:
+    """Flag one agent (or all) to report as soon as it next checks in.
+    Returns the names flagged."""
+    with _lock:
+        agents = load_agents()
+        names = [name] if name else list(agents)
+        stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        for n in names:
+            agents.setdefault(n, {})["refresh_requested"] = stamp
+        _save(AGENTS_PATH, agents)
+        return names
+
+
+def take_agent_refresh(name: str) -> bool:
+    """True (and clears the flag) if a refresh was requested for the agent."""
+    with _lock:
+        agents = load_agents()
+        entry = agents.get(name)
+        if not entry or not entry.get("refresh_requested"):
+            return False
+        entry.pop("refresh_requested", None)
+        _save(AGENTS_PATH, agents)
+        return True
 
 
 def set_agent_alerts(name: str, alerts: dict) -> None:

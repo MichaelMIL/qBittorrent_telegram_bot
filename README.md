@@ -240,7 +240,7 @@ server; on the connect screen point it at the backend URL (CORS is open).
 
 The NAS page is fed by `agent/qnap_agent.py`, which runs on a machine that can
 reach the QNAP's web UI (the Plex Mac), logs in with a user + password, and
-posts a report every 5 minutes to the web app. On the server side set the same
+posts a report every 5 minutes to the web app — or immediately when you press **Refresh now** on the NAS page (the agent checks in every few seconds between reports). On the server side set the same
 random `AGENT_TOKEN` in `.env` (plus, optionally, `NAS_USAGE_ALERT_PERCENT`,
 `NAS_DISK_TEMP_ALERT_C`, `AGENT_STALE_MINUTES`) and restart the bot.
 

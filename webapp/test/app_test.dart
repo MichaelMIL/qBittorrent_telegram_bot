@@ -278,6 +278,15 @@ void main() {
     expectVisible(find.text('DataVol1'));
     expectVisible(find.textContaining('93.6% used'));
     expectVisible(find.text('vol DataVol1 usage'));
+
+    await tester.tap(find.text('Refresh now'));
+    await tester.pump();
+    expectVisible(find.text('Waiting for agent…'));
+    await settle(tester, 20);
+    await tester.pump(const Duration(seconds: 3)); // the 2 s wait between polls
+    await settle(tester, 20);
+    expect(server.nasRefreshRequests, 1);
+    expectVisible(find.text('✅ Fresh report received.'));
     await finish(tester, state);
   });
 

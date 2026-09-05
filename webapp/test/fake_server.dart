@@ -18,6 +18,8 @@ class FakeServer {
   };
   bool favAuto = false;
   bool settingsLocked = false; // SETTINGS_PASSWORD set on the server
+  int nasRefreshRequests = 0; // POST /api/nas/refresh count
+  DateTime nasReportedAt = DateTime.now().toUtc();
   String? userPassword = 'user'; // null = no USER_PASSWORD on the server
   String get userToken => 'user-tok';
   final Map<String, bool> userPages = {
@@ -319,6 +321,13 @@ class FakeServer {
           e['read'] = true;
         }
         return send({'ok': true});
+      case ('POST', '/api/nas/refresh'):
+        nasRefreshRequests++;
+        // pretend the agent answered right away
+        nasReportedAt = DateTime.now().toUtc().add(const Duration(seconds: 1));
+        return send({
+          'requested': <String>['qnap'],
+        });
       case ('GET', '/api/nas'):
         return send({
           'configured': true,
@@ -326,7 +335,7 @@ class FakeServer {
           'agents': [
             {
               'name': 'qnap',
-              'received_at': DateTime.now().toUtc().toIso8601String(),
+              'received_at': nasReportedAt.toIso8601String(),
               'online': true,
               'alerts': ['disk:2:temp', 'vol:DataVol1:usage'],
               'report': {

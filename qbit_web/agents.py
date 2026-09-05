@@ -42,6 +42,7 @@ def agents_view() -> list[dict]:
                 "online": is_online(entry),
                 "stale_after_minutes": config.AGENT_STALE_MINUTES,
                 "alerts": sorted(entry.get("alerts", {})),
+                "refresh_pending": bool(entry.get("refresh_requested")),
                 "report": report,
             }
         )

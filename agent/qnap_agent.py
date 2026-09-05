@@ -10,7 +10,10 @@ page and alerts (Telegram + Activity) on bad disks, full volumes or silence.
 Configure with environment variables or a .env file next to this script:
   QNAP_HOST, QNAP_PORT (8080), QNAP_USER, QNAP_PASSWORD, QNAP_SSL (0/1)
   WEBAPP_URL (e.g. http://192.168.50.20:8765), AGENT_TOKEN (same as the server)
-  AGENT_NAME (qnap), INTERVAL_SECONDS (300)
+  AGENT_NAME (qnap), INTERVAL_SECONDS (300), CHECKIN_SECONDS (5)
+
+Between reports the agent checks in with the web app every CHECKIN_SECONDS;
+when someone presses Refresh on the NAS page it reports immediately.
 
   python qnap_agent.py            # run forever
   python qnap_agent.py --once     # collect once, print the report, exit
@@ -124,19 +127,27 @@ def collect() -> dict:
     return report
 
 
-def post(report: dict) -> None:
+def _server() -> tuple[str, dict]:
     url = env("WEBAPP_URL").rstrip("/")
     token = env("AGENT_TOKEN")
     if not url or not token:
         raise RuntimeError("WEBAPP_URL and AGENT_TOKEN must be set")
-    r = requests.post(
-        f"{url}/api/agents/{env('AGENT_NAME', 'qnap')}/report",
-        json={"report": report},
-        headers={"X-Agent-Token": token},
-        timeout=30,
-    )
+    return f"{url}/api/agents/{env('AGENT_NAME', 'qnap')}", {"X-Agent-Token": token}
+
+
+def post(report: dict) -> None:
+    base, headers = _server()
+    r = requests.post(f"{base}/report", json={"report": report}, headers=headers, timeout=30)
     r.raise_for_status()
     log.info("reported: %s", r.json())
+
+
+def refresh_requested() -> bool:
+    """Ask the web app whether someone pressed Refresh since the last report."""
+    base, headers = _server()
+    r = requests.get(f"{base}/poll", headers=headers, timeout=10)
+    r.raise_for_status()
+    return bool(r.json().get("refresh"))
 
 
 def main() -> None:
@@ -146,6 +157,7 @@ def main() -> None:
     args = ap.parse_args()
     logging.basicConfig(format="%(asctime)s %(name)s %(levelname)s %(message)s", level=logging.INFO)
     interval = int(env("INTERVAL_SECONDS", "300") or 300)
+    checkin = max(2, int(env("CHECKIN_SECONDS", "5") or 5))
 
     while True:
         try:
@@ -168,7 +180,16 @@ def main() -> None:
             log.error("post failed: %s", e)
         if args.once:
             return
-        time.sleep(interval)
+        # sleep until the next report, waking early if a refresh is requested
+        deadline = time.monotonic() + interval
+        while time.monotonic() < deadline:
+            time.sleep(min(checkin, max(0, deadline - time.monotonic())))
+            try:
+                if refresh_requested():
+                    log.info("refresh requested from the app")
+                    break
+            except Exception as e:
+                log.warning("check-in failed: %s", e)
 
 
 if __name__ == "__main__":
