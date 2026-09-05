@@ -140,7 +140,8 @@ class FakeServer {
           'cache': {
             'covers': 7,
             'bytes': 123456,
-            'clear_every_hours': 24,
+            'max_bytes': 1073741824,
+            'clear_every_hours': 168,
             'cleared_at': null,
           },
         });

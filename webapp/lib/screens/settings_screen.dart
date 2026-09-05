@@ -144,11 +144,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   static String _cacheSubtitle(Status? status) {
     if (status == null) return '';
     final every = status.cacheClearEveryHours;
+    final period = every >= 24 && every % 24 == 0
+        ? '${(every / 24).round()} d'
+        : '${every.toStringAsFixed(0)} h';
     final parts = <String>[
+      if (status.cacheMaxBytes > 0) 'limit ${fmtSize(status.cacheMaxBytes)}',
       if (every > 0)
-        'Cleared automatically every ${every.toStringAsFixed(0)} h'
+        'cleared every $period'
       else
-        'No automatic clearing (CACHE_CLEAR_HOURS=0)',
+        'no automatic clearing (CACHE_CLEAR_HOURS=0)',
       if (status.cacheClearedAt != null)
         'last cleared ${fmtAgo(status.cacheClearedAt!)}',
     ];
@@ -250,7 +254,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       status == null
                           ? 'Poster cache'
                           : '${status.cacheCovers} posters · '
-                                '${fmtSize(status.cacheBytes)} in memory',
+                                '${fmtSize(status.cacheBytes)} on disk',
                     ),
                     subtitle: Text(_cacheSubtitle(status)),
                     trailing: FilledButton.tonalIcon(

@@ -399,6 +399,7 @@ class Status {
       settingsLocked = j['settings_locked'] == true,
       cacheCovers = _int(jsonMap(j['cache'])['covers']),
       cacheBytes = _int(jsonMap(j['cache'])['bytes']),
+      cacheMaxBytes = _int(jsonMap(j['cache'])['max_bytes']),
       cacheClearEveryHours = _double(jsonMap(j['cache'])['clear_every_hours']),
       cacheClearedAt = DateTime.tryParse(
         _str(jsonMap(j['cache'])['cleared_at']),
@@ -419,6 +420,7 @@ class Status {
   final bool settingsLocked;
   final int cacheCovers;
   final int cacheBytes;
+  final int cacheMaxBytes;
   final double cacheClearEveryHours;
   final DateTime? cacheClearedAt;
 }

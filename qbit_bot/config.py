@@ -38,8 +38,12 @@ WEB_PORT = int(os.environ.get("WEB_PORT", "8765"))
 WEB_PASSWORD = os.environ.get("WEB_PASSWORD", "").strip()  # empty = no login
 # second password just for the web app's Settings tab (empty = settings open)
 SETTINGS_PASSWORD = os.environ.get("SETTINGS_PASSWORD", "").strip()
-# the server's in-memory poster cache is dropped this often (0 = never)
-CACHE_CLEAR_HOURS = float(os.environ.get("CACHE_CLEAR_HOURS", "24") or 0)
+# poster cache (data/covers): re-encoded JPEGs, LRU-evicted above CACHE_MAX_MB,
+# wiped every CACHE_CLEAR_HOURS (0 = never); defaults 1 GiB / weekly
+CACHE_CLEAR_HOURS = float(os.environ.get("CACHE_CLEAR_HOURS", "168") or 0)
+CACHE_MAX_MB = float(os.environ.get("CACHE_MAX_MB", "1024") or 0)
+CACHE_MAX_WIDTH = int(os.environ.get("CACHE_MAX_WIDTH", "500"))  # px, posters
+CACHE_JPEG_QUALITY = int(os.environ.get("CACHE_JPEG_QUALITY", "82"))
 WEB_BUILD_DIR = BASE_DIR / "webapp" / "build" / "web"
 
 PAGE_SIZE = 8
@@ -72,6 +76,7 @@ WATCH_PATH = str(DATA_DIR / "watch.json")
 SERIES_DEFAULTS_PATH = str(DATA_DIR / "series_defaults.json")
 NOTIFIED_PATH = str(DATA_DIR / "notified.json")
 EVENTS_PATH = str(DATA_DIR / "events.json")
+COVERS_DIR = Path(os.environ.get("COVERS_DIR") or DATA_DIR / "covers")
 
 logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s %(message)s", level=logging.INFO

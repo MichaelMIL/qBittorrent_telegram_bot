@@ -16,7 +16,8 @@ from fastapi.staticfiles import StaticFiles
 from qbit_bot import config, storage
 from qbit_bot.jobs import completion_notifier, favorites_episode_checker, qbit_cache_refresher
 
-from .api import cache_sweeper, install_error_handlers, public, router
+from . import covers
+from .api import install_error_handlers, public, router
 
 log = logging.getLogger("qbit-web")
 
@@ -24,7 +25,7 @@ log = logging.getLogger("qbit-web")
 def create_app(run_jobs: bool) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        tasks = [asyncio.create_task(cache_sweeper())]  # server-local, both modes
+        tasks = [asyncio.create_task(covers.sweeper())]  # server-local, both modes
         if run_jobs:
             storage.interval_changed = asyncio.Event()
             tasks += [

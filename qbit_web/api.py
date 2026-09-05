@@ -5,7 +5,6 @@ import asyncio
 import hashlib
 import hmac
 import logging
-from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any
 
@@ -25,7 +24,6 @@ from qbit_bot.config import (
 from qbit_bot.hebits import (
     HEBITS_CATS,
     HebitsError,
-    fetch_cover,
     hebits_download,
     hebits_latest,
     hebits_search,
@@ -61,6 +59,8 @@ from qbit_bot.utils import (
     torrent_info_hash,
 )
 from qbit_bot.views import RES_CHOICES, default_label
+
+from . import covers
 
 log = logging.getLogger("qbit-web")
 
@@ -234,7 +234,7 @@ async def status():
         "telegram": bool(config.BOT_TOKEN),
         "settings": settings,
         "unread_events": sum(1 for e in load_events() if not e.get("read")),
-        "cache": cache_stats(),
+        "cache": covers.stats(),
         "settings_locked": settings_locked(),
     }
 
@@ -333,67 +333,22 @@ async def group(gid: str, q: str | None = None):
     return group_json(hit, load_favorites(), load_series_defaults())
 
 
-_cover_cache: "OrderedDict[str, tuple[bytes, str]]" = OrderedDict()
-_cache_cleared_at: str | None = None  # ISO timestamp of the last clear
-
-
-def cache_stats() -> dict:
-    return {
-        "covers": len(_cover_cache),
-        "bytes": sum(len(data) for data, _ in _cover_cache.values()),
-        "cleared_at": _cache_cleared_at,
-        "clear_every_hours": config.CACHE_CLEAR_HOURS,
-    }
-
-
-def clear_cache() -> dict:
-    """Drop everything the server caches in memory (poster images)."""
-    global _cache_cleared_at
-    before = cache_stats()
-    _cover_cache.clear()
-    _cache_cleared_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    log.info("cache cleared: %d covers, %d bytes", before["covers"], before["bytes"])
-    return {"cleared": {"covers": before["covers"], "bytes": before["bytes"]}, "cache": cache_stats()}
-
-
-async def cache_sweeper() -> None:
-    """Background task: clear the in-memory cache every CACHE_CLEAR_HOURS."""
-    hours = config.CACHE_CLEAR_HOURS
-    if hours <= 0:
-        return
-    while True:
-        await asyncio.sleep(hours * 3600)
-        clear_cache()
-
-
 @router.post("/cache/clear", dependencies=[Depends(require_settings)])
 async def cache_clear():
-    return clear_cache()
-_IMAGE_TYPES = (
-    (b"\x89PNG", "image/png"),
-    (b"\xff\xd8", "image/jpeg"),
-    (b"GIF8", "image/gif"),
-    (b"RIFF", "image/webp"),
-)
+    return await run(covers.clear)
 
 
 @router.get("/cover")
 async def cover(url: str):
-    """Poster proxy: fetched from this machine (the HeBits cookie only goes to
-    hebits.net), cached in memory."""
+    """Poster proxy backed by the on-disk cache (see qbit_web.covers): fetched
+    from this machine, re-encoded small, served with a long browser TTL."""
     if not url.startswith(("http://", "https://")):
         raise HTTPException(400, "Bad URL")
-    hit = _cover_cache.get(url)
+    hit = await run(covers.get, url)
     if hit is None:
-        data = await run(fetch_cover, url)
-        if not data:
-            raise HTTPException(404, "No image")
-        ctype = next((t for magic, t in _IMAGE_TYPES if data.startswith(magic)), "image/jpeg")
-        hit = (data, ctype)
-        _cover_cache[url] = hit
-        while len(_cover_cache) > 300:
-            _cover_cache.popitem(last=False)
-    return Response(hit[0], media_type=hit[1], headers={"Cache-Control": "public, max-age=86400"})
+        raise HTTPException(404, "No image")
+    data, ctype = hit
+    return Response(data, media_type=ctype, headers={"Cache-Control": "public, max-age=604800"})
 
 
 # ------------------------------------------------------------------ adding

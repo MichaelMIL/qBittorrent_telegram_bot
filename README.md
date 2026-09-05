@@ -204,8 +204,9 @@ Open `http://<mac-ip>:8765` from any browser on the LAN (add it to the phone's
 home screen — it's a PWA). `WEB_HOST`, `WEB_PORT` and `WEB_ENABLED=0` (to
 turn the server off in `bot.py`) are in `.env.example`, as are
 `SETTINGS_PASSWORD` (locks the Settings tab behind a second password) and
-`CACHE_CLEAR_HOURS` (the server drops its in-memory poster cache this often,
-default 24; the Settings tab has a Clear cache button too). The startup log
+`CACHE_CLEAR_HOURS` / `CACHE_MAX_MB` (posters are cached on disk in
+`data/covers` as small JPEGs; the cache is capped at 1 GiB and wiped weekly by
+default; the Settings tab has a Clear cache button too). The startup log
 prints the reachable URLs. Interactive API docs: `/api/docs`.
 
 Don't run `bot.py` and `web.py` at the same time — both run the background
@@ -221,7 +222,7 @@ jobs, so you'd get double notifications and double auto-adds.
 | ⭐ Favorites | starred series with their default and newest known episode; ⚡ switch toggles auto-add (walks you through setting a default if there is none); the ⋮ menu edits / forgets the default or removes the favorite; **Check episodes** runs the scan right now |
 | 🔔 Activity | the notification feed: new episodes (tap a release to add it), auto-adds, completion pings (with **Scan Plex now**), stuck / error alerts, Plex scans. Unread count on the tab; swipe to dismiss |
 | 🎞 Plex | libraries with one-tap scans and live "scanning…" state (top-level on wide screens, under Settings / Library on phones) |
-| ⚙️ Settings | status, server cache (size, auto-clear schedule, **Clear cache** button), the four intervals, auto-scan toggle, category → Plex library map, refresh / check / validate cookie / update cookie, log out. With `SETTINGS_PASSWORD` set in `.env` the tab is locked behind that second password (asked once per session; the server also refuses settings changes, cookie updates and cache clears without it) |
+| ⚙️ Settings | status, poster cache (posters are re-encoded small and kept on disk under `data/covers`, capped at 1 GiB with oldest-first eviction, wiped weekly; size, schedule and a **Clear cache** button), the four intervals, auto-scan toggle, category → Plex library map, refresh / check / validate cookie / update cookie, log out. With `SETTINGS_PASSWORD` set in `.env` the tab is locked behind that second password (asked once per session; the server also refuses settings changes, cookie updates and cache clears without it) |
 
 Development: `cd webapp && flutter run -d chrome` starts the app on a dev
 server; on the connect screen point it at the backend URL (CORS is open).
