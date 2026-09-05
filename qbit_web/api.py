@@ -165,6 +165,7 @@ def group_json(g: dict, favorites: dict, defaults: dict) -> dict:
         "cover": g["cover"],
         "imdb": g["imdb"],
         "cat": g["cat"],
+        "tags": g.get("tags", []),
         "torrents": torrents,
         "favorite": gid in favorites,
         "auto": bool(favorites.get(gid, {}).get("auto")),
@@ -259,24 +260,59 @@ async def search(q: str, cat: str = "a", page: int = 1):
 
 BROWSE_CATS = {"movies": "1", "series": "2"}
 
+# HeBits genre tags (Hebrew, as the site stores them) with English labels, in
+# display order. Filtering is server-side via the Gazelle `taglist` parameter.
+BROWSE_GENRES = [
+    ("דרמה", "Drama"),
+    ("קומדיה", "Comedy"),
+    ("מותחן", "Thriller"),
+    ("פעולה", "Action"),
+    ("הרפתקאות", "Adventure"),
+    ("פשע", "Crime"),
+    ("מסתורין", "Mystery"),
+    ("אימה", "Horror"),
+    ("פנטזיה", "Fantasy"),
+    ("מדע.בדיוני", "Sci-Fi"),
+    ("רומנטי", "Romance"),
+    ("משפחה", "Family"),
+    ("ילדים", "Kids"),
+    ("אנימציה", "Animation"),
+    ("דוקומנטרי", "Documentary"),
+    ("ביוגרפיה", "Biography"),
+    ("היסטוריה", "History"),
+    ("מלחמה", "War"),
+    ("מערבון", "Western"),
+    ("מוזיקלי", "Musical"),
+    ("ספורט", "Sport"),
+    ("ריאליטי", "Reality"),
+    ("תוכנית.אירוח", "Talk show"),
+    ("שעשועון", "Game show"),
+    ("סאטירה", "Satire"),
+    ("ישראלי", "Israeli"),
+]
+
 
 @router.get("/browse")
-async def browse(cat: str, page: int = 1):
+async def browse(cat: str, page: int = 1, genre: str | None = None):
     """Newest HeBits content in a category (the site's movies.php / series.php
     pages), same shape as /api/search so the app can reuse its tiles.
-    cat: 'movies' | 'series' (or a raw HeBits category id)."""
+    cat: 'movies' | 'series' (or a raw HeBits category id);
+    genre: a HeBits tag (see BROWSE_GENRES) to show only that genre."""
     cat_id = BROWSE_CATS.get(cat, cat)
     if not cat_id.isdigit():
         raise HTTPException(400, f"cat must be one of {', '.join(BROWSE_CATS)}")
     if page < 1:
         raise HTTPException(400, "page starts at 1")
-    groups, pages = await run(hebits_latest, cat_id, page)
+    genre = (genre or "").strip() or None
+    groups, pages = await run(hebits_latest, cat_id, page, genre)
     await run(decorate_local_status, groups)
     favorites, defaults = load_favorites(), load_series_defaults()
     return {
         "cat": cat,
         "page": page,
         "pages": pages,
+        "genre": genre,
+        "genres": [{"tag": t, "label": label} for t, label in BROWSE_GENRES],
         "groups": [group_json(g, favorites, defaults) for g in groups],
     }
 

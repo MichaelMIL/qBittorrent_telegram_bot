@@ -25,6 +25,9 @@ class FakeServer {
   /// One entry per browse request, as 'cat/page' (the plain [calls] list has
   /// no query string, and browse is all about which page was asked for).
   final List<String> browseCalls = [];
+
+  /// The `genre` query parameter of each browse request ('' when absent).
+  final List<String> browseGenres = [];
   int browsePages = 3;
 
   /// Non-200 makes every browse request fail with [browseDetail].
@@ -171,6 +174,8 @@ class FakeServer {
         final cat = req.uri.queryParameters['cat'] ?? '';
         final page = int.tryParse(req.uri.queryParameters['page'] ?? '1') ?? 1;
         browseCalls.add('$cat/$page');
+        final genre = req.uri.queryParameters['genre'] ?? '';
+        browseGenres.add(genre);
         final delay = browseDelay['$cat/$page'];
         if (delay != null) await Future<void>.delayed(delay);
         if (browseStatus != 200) {
@@ -180,6 +185,11 @@ class FakeServer {
           'cat': cat,
           'page': page,
           'pages': browsePages,
+          'genre': genre.isEmpty ? null : genre,
+          'genres': [
+            {'tag': 'דרמה', 'label': 'Drama'},
+            {'tag': 'קומדיה', 'label': 'Comedy'},
+          ],
           'groups': browseEmpty ? <Object>[] : browseGroups(cat, page),
         });
       case ('GET', '/api/group'):

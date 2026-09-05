@@ -173,7 +173,11 @@ class _ShellState extends State<Shell> {
                     setState(() => _index = _destinations.indexOf(visible[i])),
                 leading: const Padding(
                   padding: EdgeInsets.symmetric(vertical: 12),
-                  child: Text('🫡', style: TextStyle(fontSize: 28)),
+                  child: Image(
+                    image: AssetImage('assets/logo.png'),
+                    width: 40,
+                    height: 40,
+                  ),
                 ),
                 destinations: [
                   for (final d in visible)

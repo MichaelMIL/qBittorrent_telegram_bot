@@ -190,11 +190,20 @@ class SearchPage {
 /// One page of the HeBits "newest uploads" feed (`GET /api/browse`).
 ///
 /// Same group shape as [SearchPage]; the browse response carries no `query`.
+/// A HeBits genre tag (Hebrew, as the site stores it) with an English label.
+class Genre {
+  Genre.fromJson(Json j) : tag = _str(j['tag']), label = _str(j['label']);
+  final String tag;
+  final String label;
+}
+
 class BrowsePage {
   BrowsePage.fromJson(Json j)
     : cat = _str(j['cat']),
       page = _int(j['page']),
       pages = _int(j['pages']),
+      genre = j['genre'] == null ? null : _str(j['genre']),
+      genres = [for (final g in jsonList(j['genres'])) Genre.fromJson(g)],
       groups = [
         for (final g in jsonList(j['groups'])) Group.fromJson(g),
       ];
@@ -203,7 +212,19 @@ class BrowsePage {
   final String cat;
   final int page;
   final int pages;
+
+  /// The genre tag this page was filtered by, or null for everything.
+  final String? genre;
+
+  /// Genres the server can filter by, in display order.
+  final List<Genre> genres;
   final List<Group> groups;
+
+  /// English label for [genre] (falls back to the tag itself).
+  String? get genreLabel => genre == null
+      ? null
+      : genres.where((g) => g.tag == genre).map((g) => g.label).firstOrNull ??
+            genre;
 
   /// The page we are on, never below 1 (a missing `page` coerces to 0).
   int get current => page < 1 ? 1 : page;

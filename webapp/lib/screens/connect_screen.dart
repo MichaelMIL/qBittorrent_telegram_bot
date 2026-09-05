@@ -64,10 +64,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text(
-                      '🫡',
-                      style: TextStyle(fontSize: 48),
-                      textAlign: TextAlign.center,
+                    const Image(
+                      image: AssetImage('assets/logo.png'),
+                      width: 96,
+                      height: 96,
                     ),
                     const SizedBox(height: 8),
                     Text(

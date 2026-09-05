@@ -113,6 +113,33 @@ void main() {
     await finish(tester, state);
   });
 
+  testWidgets('genre filter: pick Comedy, page resets, title shows it, clear', (
+    tester,
+  ) async {
+    final state = await openBrowse(tester, server);
+    expect(server.browseGenres, ['']);
+
+    await tester.tap(find.byTooltip('Filter by genre'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400)); // sheet animation
+    expectVisible(find.text('All genres'));
+    await tester.tap(find.text('Comedy'));
+    await settle(tester);
+    expect(server.browseGenres.last, 'קומדיה');
+    expect(server.browseCalls.last, 'series/1');
+    expectVisible(inBrowse(find.text('🆕 Comedy')));
+
+    await tester.tap(find.byTooltip('Filter by genre'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('All genres'));
+    await settle(tester);
+    expect(server.browseGenres.last, '');
+    expectVisible(inBrowse(find.text('🆕 New on HeBits')));
+
+    await finish(tester, state);
+  });
+
   testWidgets('tiles show the favorite, freeleech, snatched and local marks', (
     tester,
   ) async {

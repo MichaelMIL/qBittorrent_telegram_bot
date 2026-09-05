@@ -80,11 +80,15 @@ def hebits_search(query: str, cat: str = "a", page: int = 1) -> tuple[list[dict]
     return hebits_browse({"searchstr": query, "order_by": "seeders"}, cat, page)
 
 
-def hebits_latest(cat: str, page: int = 1) -> tuple[list[dict], int]:
+def hebits_latest(cat: str, page: int = 1, genre: str | None = None) -> tuple[list[dict], int]:
     """Newest uploads in a category, like the site's movies.php / series.php
-    pages: the browse endpoint with no search text, newest first.
+    pages: the browse endpoint with no search text, newest first, optionally
+    restricted to one genre tag (HeBits tags are Hebrew, e.g. 'קומדיה').
     cat: HeBits category id ('1' movies, '2' series). Returns (groups, pages)."""
-    return hebits_browse({"order_by": "time"}, cat, page)
+    extra = {"order_by": "time"}
+    if genre:
+        extra["taglist"] = genre
+    return hebits_browse(extra, cat, page)
 
 
 def hebits_browse(extra: dict, cat: str = "a", page: int = 1) -> tuple[list[dict], int]:
@@ -155,6 +159,7 @@ def hebits_browse(extra: dict, cat: str = "a", page: int = 1) -> tuple[list[dict
                 "cover": group.get("cover") or "",
                 "imdb": group.get("catalogue") or "",
                 "cat": HEBITS_CATS.get(group.get("categoryID"), ""),
+                "tags": [str(t) for t in (group.get("tags") or [])],
                 "torrents": torrents,
             }
         )

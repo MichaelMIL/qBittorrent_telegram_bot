@@ -20,6 +20,8 @@ class _CatState {
   String? error; // ApiException.message, verbatim
   int seq = 0; // monotonic request sequence — stale-response guard
   bool started = false; // first load fired for this category
+  String? genre; // active genre tag filter (server-side), null = all
+  List<Genre> genres = const []; // last genre list the server sent
 }
 
 /// Newest uploads on HeBits, paged, one tab per category.
@@ -64,6 +66,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
       final json = await AppScope.read(context).api.get('/api/browse', {
         'cat': cat,
         'page': '$target',
+        'genre': s.genre,
       });
       if (!mounted) return;
       if (token != s.seq) return;
@@ -72,6 +75,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
         s
           ..data = parsed
           ..requested = parsed.page;
+        if (parsed.genres.isNotEmpty) s.genres = parsed.genres;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -83,14 +87,79 @@ class _BrowseScreenState extends State<BrowseScreen> {
     }
   }
 
+  /// Pick a genre for the current tab (server-side filter); null = all.
+  Future<void> _pickGenre() async {
+    final s = _state[_cat]!;
+    final genres = s.genres;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.6,
+        maxChildSize: 0.95,
+        builder: (ctx, controller) => ListView(
+          controller: controller,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text(
+                'Genre',
+                style: Theme.of(ctx).textTheme.titleMedium,
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.all_inclusive),
+              title: const Text('All genres'),
+              selected: s.genre == null,
+              onTap: () => Navigator.pop(ctx, ''),
+            ),
+            for (final g in genres)
+              ListTile(
+                leading: const Icon(Icons.label_outline),
+                title: Text(g.label),
+                subtitle: Text(g.tag),
+                selected: s.genre == g.tag,
+                onTap: () => Navigator.pop(ctx, g.tag),
+              ),
+            const SizedBox(height: 24),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || !mounted) return;
+    final genre = choice.isEmpty ? null : choice;
+    if (genre == s.genre) return;
+    s.genre = genre;
+    await _load(_cat, page: 1);
+  }
+
   @override
   Widget build(BuildContext context) {
     final cur = _state[_cat]!;
     final data = cur.data;
+    final genreLabel = cur.genre == null
+        ? null
+        : cur.genres
+                  .where((g) => g.tag == cur.genre)
+                  .map((g) => g.label)
+                  .firstOrNull ??
+              cur.genre;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('🆕 New on HeBits'),
+        title: Text(genreLabel == null ? '🆕 New on HeBits' : '🆕 $genreLabel'),
         actions: [
+          IconButton(
+            tooltip: 'Filter by genre',
+            icon: Icon(
+              cur.genre == null ? Icons.filter_list : Icons.filter_list_alt,
+              color: cur.genre == null
+                  ? null
+                  : Theme.of(context).colorScheme.primary,
+            ),
+            onPressed: cur.genres.isEmpty ? null : _pickGenre,
+          ),
           IconButton(
             tooltip: 'Search HeBits',
             icon: const Icon(Icons.search),
@@ -176,7 +245,9 @@ class _BrowseScreenState extends State<BrowseScreen> {
     if (data.groups.isEmpty) {
       return EmptyView(
         icon: Icons.inbox_outlined,
-        text: 'HeBits had nothing new on page ${data.page}.',
+        text: s.genre == null
+            ? 'HeBits had nothing new on page ${data.page}.'
+            : 'Nothing in this genre on page ${data.page}.',
         onRetry: () => _load(cat),
         retryLabel: 'Reload',
       );
