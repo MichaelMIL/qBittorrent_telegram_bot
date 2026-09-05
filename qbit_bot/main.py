@@ -78,7 +78,7 @@ def main():
         if config.WEB_ENABLED:
             from qbit_web.server import make_server
 
-            web["server"] = make_server()
+            web["server"] = make_server(app_)
             web["task"] = loop.create_task(web["server"].serve(), name="web-server")
 
     async def stop_background_jobs(app_: Application):

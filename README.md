@@ -229,11 +229,37 @@ jobs, so you'd get double notifications and double auto-adds.
 | ⭐ Favorites | starred series with their default and newest known episode; ⚡ switch toggles auto-add (walks you through setting a default if there is none); the ⋮ menu edits / forgets the default or removes the favorite; **Check episodes** runs the scan right now |
 | 🔔 Activity | the notification feed: new episodes (tap a release to add it), auto-adds, completion pings (with **Scan Plex now**), stuck / error alerts, Plex scans. Unread count on the tab; swipe to dismiss |
 | 🎞 Plex | libraries with one-tap scans and live "scanning…" state (top-level on wide screens, under Settings / Library on phones) |
+| 🗄 NAS | disk health, temperatures and volume usage of the QNAP, reported by a small agent that runs on the machine next to it (see [QNAP agent](#qnap-agent)). Alerts for a bad disk, a hot disk, a full volume or a silent agent go to Telegram and the Activity feed |
 | ⚙️ Settings | status, poster cache (posters are re-encoded small and kept on disk under `data/covers`, capped at 1 GiB with oldest-first eviction, wiped weekly; size, schedule and a **Clear cache** button), the four intervals, auto-scan toggle, category → Plex library map, refresh / check / validate cookie / update cookie, log out. With `SETTINGS_PASSWORD` set in `.env` the tab is locked behind that second password (asked once per session; the server also refuses settings changes, cookie updates and cache clears without it) |
 
 Development: `cd webapp && flutter run -d chrome` starts the app on a dev
 server; on the connect screen point it at the backend URL (CORS is open).
 `flutter test` runs the widget tests against an in-process fake API.
+
+## QNAP agent
+
+The NAS page is fed by `agent/qnap_agent.py`, which runs on a machine that can
+reach the QNAP's web UI (the Plex Mac), logs in with a user + password, and
+posts a report every 5 minutes to the web app. On the server side set the same
+random `AGENT_TOKEN` in `.env` (plus, optionally, `NAS_USAGE_ALERT_PERCENT`,
+`NAS_DISK_TEMP_ALERT_C`, `AGENT_STALE_MINUTES`) and restart the bot.
+
+On the Mac:
+
+```bash
+mkdir ~/qnap-agent && cd ~/qnap-agent
+cp /path/to/repo/agent/{qnap_agent.py,requirements.txt,.env.example,com.qbit.qnap-agent.plist} .
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+cp .env.example .env      # QNAP_HOST/USER/PASSWORD, WEBAPP_URL, AGENT_TOKEN
+.venv/bin/python qnap_agent.py --once          # prints the report it would send
+.venv/bin/python qnap_agent.py --once --post   # sends one report
+```
+
+To keep it running, edit the two paths in `com.qbit.qnap-agent.plist`, copy it
+to `~/Library/LaunchAgents/` and `launchctl load` it (log: `/tmp/qnap-agent.log`).
+The agent uses [python-qnapstats](https://github.com/colinodell/python-qnapstats)
+(the library behind Home Assistant's QNAP integration); a read-only QNAP user
+is enough. User logins see the NAS page only if the admin enables it.
 
 ## Commands
 

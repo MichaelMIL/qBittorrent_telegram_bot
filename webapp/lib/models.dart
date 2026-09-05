@@ -439,3 +439,123 @@ class Status {
   final double cacheClearEveryHours;
   final DateTime? cacheClearedAt;
 }
+
+// ---------------------------------------------------------------- NAS agents
+
+class NasSystem {
+  NasSystem.fromJson(Json j)
+    : name = _str(j['name']),
+      model = _str(j['model']),
+      firmware = _str(j['firmware']),
+      health = _str(j['health']),
+      uptimeSeconds = _int(j['uptime_seconds']),
+      tempC = j['temp_c'] is num ? (j['temp_c'] as num).round() : null,
+      cpuTempC = j['cpu_temp_c'] is num
+          ? (j['cpu_temp_c'] as num).round()
+          : null,
+      cpuPercent = j['cpu_percent'] is num
+          ? (j['cpu_percent'] as num).toDouble()
+          : null,
+      memoryTotalMb = j['memory_total_mb'] is num
+          ? (j['memory_total_mb'] as num).toDouble()
+          : null,
+      memoryFreeMb = j['memory_free_mb'] is num
+          ? (j['memory_free_mb'] as num).toDouble()
+          : null;
+  final String name;
+  final String model;
+  final String firmware;
+  final String health;
+  final int uptimeSeconds;
+  final int? tempC;
+  final int? cpuTempC;
+  final double? cpuPercent;
+  final double? memoryTotalMb;
+  final double? memoryFreeMb;
+}
+
+class NasDisk {
+  NasDisk.fromJson(Json j)
+    : slot = _str(j['slot']),
+      model = _str(j['model']),
+      serial = _str(j['serial']),
+      capacity = _str(j['capacity']),
+      type = _str(j['type']),
+      health = _str(j['health']),
+      tempC = j['temp_c'] is num ? (j['temp_c'] as num).round() : null;
+  final String slot;
+  final String model;
+  final String serial;
+  final String capacity;
+  final String type;
+  final String health;
+  final int? tempC;
+}
+
+class NasFolder {
+  NasFolder.fromJson(Json j)
+    : name = _str(j['name']),
+      usedBytes = _int(j['used_bytes']);
+  final String name;
+  final int usedBytes;
+}
+
+class NasVolume {
+  NasVolume.fromJson(Json j)
+    : label = _str(j['label']),
+      status = _str(j['status']),
+      totalBytes = _int(j['total_bytes']),
+      freeBytes = _int(j['free_bytes']),
+      usedPercent = j['used_percent'] is num
+          ? (j['used_percent'] as num).toDouble()
+          : null,
+      folders = [for (final f in jsonList(j['folders'])) NasFolder.fromJson(f)];
+  final String label;
+  final String status;
+  final int totalBytes;
+  final int freeBytes;
+  final double? usedPercent;
+  final List<NasFolder> folders;
+}
+
+/// One report from agent/qnap_agent.py.
+class NasReport {
+  NasReport.fromJson(Json j)
+    : ok = j['ok'] != false,
+      error = _str(j['error']),
+      system = NasSystem.fromJson(jsonMap(j['system'])),
+      disks = [for (final d in jsonList(j['disks'])) NasDisk.fromJson(d)],
+      volumes = [for (final v in jsonList(j['volumes'])) NasVolume.fromJson(v)];
+  final bool ok;
+  final String error;
+  final NasSystem system;
+  final List<NasDisk> disks;
+  final List<NasVolume> volumes;
+}
+
+class NasAgent {
+  NasAgent.fromJson(Json j)
+    : name = _str(j['name']),
+      receivedAt = DateTime.tryParse(_str(j['received_at']))?.toLocal(),
+      online = j['online'] == true,
+      alerts = stringList(j['alerts']),
+      report = NasReport.fromJson(jsonMap(j['report']));
+  final String name;
+  final DateTime? receivedAt;
+  final bool online;
+  final List<String> alerts;
+  final NasReport report;
+}
+
+/// GET /api/nas: every agent plus the alert thresholds.
+class NasView {
+  NasView.fromJson(Json j)
+    : configured = j['configured'] == true,
+      agents = [for (final a in jsonList(j['agents'])) NasAgent.fromJson(a)],
+      usagePercent = _double(jsonMap(j['thresholds'])['usage_percent']),
+      diskTempC = _int(jsonMap(j['thresholds'])['disk_temp_c']);
+  final bool configured;
+  final List<NasAgent> agents;
+  final double usagePercent;
+  final int diskTempC;
+}

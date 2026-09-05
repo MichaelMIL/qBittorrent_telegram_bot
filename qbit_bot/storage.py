@@ -12,6 +12,7 @@ import threading
 from datetime import datetime, timezone
 
 from .config import (
+    AGENTS_PATH,
     DEFAULT_SETTINGS,
     EVENTS_PATH,
     FAVORITES_PATH,
@@ -240,6 +241,34 @@ def remove_event(event_id: int) -> bool:
             return False
         _save(EVENTS_PATH, {"next_id": data.get("next_id", len(items) + 1), "items": kept})
         return True
+
+
+# ------------------------------------------------------------------ agents
+
+def load_agents() -> dict:
+    """agent name -> {received_at, report, alerts: {key: since}} for external
+    agents (the QNAP monitor on the Plex Mac)."""
+    return _load(AGENTS_PATH)
+
+
+def save_agent_report(name: str, report: dict) -> dict:
+    with _lock:
+        agents = load_agents()
+        entry = agents.setdefault(name, {})
+        entry["received_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        entry["report"] = report
+        entry.setdefault("alerts", {})
+        _save(AGENTS_PATH, agents)
+        return entry
+
+
+def set_agent_alerts(name: str, alerts: dict) -> None:
+    """Replace the set of currently-active alert keys for an agent."""
+    with _lock:
+        agents = load_agents()
+        entry = agents.setdefault(name, {})
+        entry["alerts"] = alerts
+        _save(AGENTS_PATH, agents)
 
 
 # ------------------------------------------------------------------ defaults

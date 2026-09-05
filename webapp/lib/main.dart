@@ -6,6 +6,7 @@ import 'package:qbit_web/screens/activity_screen.dart';
 import 'package:qbit_web/screens/browse_screen.dart';
 import 'package:qbit_web/screens/connect_screen.dart';
 import 'package:qbit_web/screens/favorites_screen.dart';
+import 'package:qbit_web/screens/nas_screen.dart';
 import 'package:qbit_web/screens/plex_screen.dart';
 import 'package:qbit_web/screens/search_screen.dart';
 import 'package:qbit_web/screens/settings_screen.dart';
@@ -113,6 +114,14 @@ final _destinations = <_Destination>[
     Icons.movie_filter_outlined,
     Icons.movie_filter,
     (_) => const PlexScreen(),
+    mobile: false,
+  ),
+  _Destination(
+    'NAS',
+    'nas',
+    Icons.storage_outlined,
+    Icons.storage,
+    (_) => const NasScreen(),
     mobile: false,
   ),
   _Destination(

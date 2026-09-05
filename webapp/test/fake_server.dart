@@ -28,6 +28,7 @@ class FakeServer {
     'favorites': false,
     'activity': false,
     'plex': false,
+    'nas': false,
   };
   int cacheClears = 0;
   String get settingsToken => 'settings-$password';
@@ -318,6 +319,68 @@ class FakeServer {
           e['read'] = true;
         }
         return send({'ok': true});
+      case ('GET', '/api/nas'):
+        return send({
+          'configured': true,
+          'thresholds': {'usage_percent': 90, 'disk_temp_c': 55},
+          'agents': [
+            {
+              'name': 'qnap',
+              'received_at': DateTime.now().toUtc().toIso8601String(),
+              'online': true,
+              'alerts': ['disk:2:temp', 'vol:DataVol1:usage'],
+              'report': {
+                'kind': 'qnap',
+                'ok': true,
+                'error': null,
+                'system': {
+                  'name': 'Media NAS',
+                  'model': 'TS-464',
+                  'firmware': '5.2.0',
+                  'health': 'good',
+                  'uptime_seconds': 864000,
+                  'temp_c': 41,
+                  'cpu_percent': 7.5,
+                  'cpu_temp_c': 48,
+                  'memory_total_mb': 7800,
+                  'memory_free_mb': 5100,
+                },
+                'disks': [
+                  {
+                    'slot': 1,
+                    'model': 'WD Red 8TB',
+                    'serial': 'X1',
+                    'capacity': '7.28 TB',
+                    'type': 'hdd',
+                    'health': 'good',
+                    'temp_c': 38,
+                  },
+                  {
+                    'slot': 2,
+                    'model': 'WD Red 8TB',
+                    'serial': 'X2',
+                    'capacity': '7.28 TB',
+                    'type': 'hdd',
+                    'health': 'good',
+                    'temp_c': 61,
+                  },
+                ],
+                'volumes': [
+                  {
+                    'label': 'DataVol1',
+                    'status': 'Ready',
+                    'total_bytes': 14000000000000,
+                    'free_bytes': 900000000000,
+                    'used_percent': 93.6,
+                    'folders': [
+                      {'name': 'Media', 'used_bytes': 9000000000000},
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        });
       case ('GET', '/api/plex/sections'):
         return send({'sections': sections});
       case ('POST', '/api/plex/scan'):

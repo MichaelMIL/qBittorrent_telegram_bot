@@ -264,6 +264,23 @@ void main() {
     await finish(tester, state);
   });
 
+  testWidgets('NAS page shows the agent report: disks, volumes, alerts', (
+    tester,
+  ) async {
+    final state = await boot(tester, server, size: const Size(1200, 900));
+    await login(tester, state, server);
+    await tester.tap(find.text('NAS'));
+    await settle(tester);
+    expectVisible(find.text('Media NAS · TS-464'));
+    expectVisible(find.textContaining('2 alerts · reported'));
+    expectVisible(find.text('Slot 2 · WD Red 8TB'));
+    expectVisible(find.text('61 °C'));
+    expectVisible(find.text('DataVol1'));
+    expectVisible(find.textContaining('93.6% used'));
+    expectVisible(find.text('vol DataVol1 usage'));
+    await finish(tester, state);
+  });
+
   testWidgets(
     'wide layout uses a rail with Plex; Plex screen lists libraries',
     (tester) async {

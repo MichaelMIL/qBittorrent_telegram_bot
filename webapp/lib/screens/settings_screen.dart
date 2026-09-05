@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:qbit_web/api/client.dart';
 import 'package:qbit_web/format.dart';
+import 'package:qbit_web/main.dart';
 import 'package:qbit_web/models.dart';
 import 'package:qbit_web/screens/plex_screen.dart';
 import 'package:qbit_web/state.dart';
@@ -150,6 +151,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ('favorites', 'Favorites', 'Starred series, auto-add and defaults'),
     ('activity', 'Activity', 'The notification feed'),
     ('plex', 'Plex', 'Trigger library scans'),
+    ('nas', 'NAS', 'QNAP disk health and storage usage'),
   ];
 
   static String _cacheSubtitle(Status? status) {
@@ -429,6 +431,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ? '✅ No new episodes for your favorites.'
                           : '🆕 $n new-episode notification(s) — see Activity.';
                     }),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.storage_outlined),
+                    title: const Text('NAS'),
+                    subtitle: const Text(
+                      'QNAP disks and volumes, as reported by the agent',
+                    ),
+                    onTap: () => ShellNav.maybeOf(context)?.goTo('NAS'),
                   ),
                   ListTile(
                     leading: const Icon(Icons.movie_filter_outlined),

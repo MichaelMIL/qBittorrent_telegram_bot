@@ -144,6 +144,12 @@ def render_note(note: dict):
     if kind == "plex_scan_failed":
         return f"⚠️ Auto Plex scan failed: {note['error']}", None
 
+    if kind == "nas_alert":
+        icon = "✅" if note.get("cleared") else "🚨"
+        lines = [f"{icon} <b>NAS {html.escape(note.get('agent', 'qnap'))}</b>"]
+        lines += [f"• {html.escape(m)}" for m in note.get("messages", [])]
+        return "\n".join(lines), None
+
     return html.escape(str(note)), None
 
 

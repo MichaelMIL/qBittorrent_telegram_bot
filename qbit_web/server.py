@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from qbit_bot import config, storage
 from qbit_bot.jobs import completion_notifier, favorites_episode_checker, qbit_cache_refresher
 
-from . import covers
+from . import agents, covers
 from .api import install_error_handlers, public, router
 
 log = logging.getLogger("qbit-web")
@@ -25,7 +25,8 @@ log = logging.getLogger("qbit-web")
 def create_app(run_jobs: bool) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        tasks = [asyncio.create_task(covers.sweeper())]  # server-local, both modes
+        # server-local tasks, both modes
+        tasks = [asyncio.create_task(covers.sweeper()), asyncio.create_task(agents.watchdog())]
         if run_jobs:
             storage.interval_changed = asyncio.Event()
             tasks += [
@@ -93,10 +94,12 @@ def _warn_if_open() -> None:
         )
 
 
-def make_server() -> uvicorn.Server:
+def make_server(telegram_app=None) -> uvicorn.Server:
     """A uvicorn server for the *current* loop (the Telegram bot's) that leaves
     the process signal handlers alone. Run it with `await server.serve()`; stop
-    it with `server.should_exit = True` and await the same coroutine."""
+    it with `server.should_exit = True` and await the same coroutine.
+    `telegram_app` lets server-side alerts (NAS) reach Telegram too."""
+    agents.telegram_app = telegram_app
     _warn_if_open()
     server = uvicorn.Server(
         uvicorn.Config(

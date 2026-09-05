@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:qbit_web/api/client.dart';
 import 'package:qbit_web/format.dart';
+import 'package:qbit_web/main.dart';
 import 'package:qbit_web/models.dart';
 import 'package:qbit_web/screens/plex_screen.dart';
 import 'package:qbit_web/screens/torrent_screen.dart';
@@ -163,6 +164,12 @@ class _TorrentsScreenState extends State<TorrentsScreen> {
             ),
             onPressed: _pickFilter,
           ),
+          if (AppScope.of(context).can('nas'))
+            IconButton(
+              tooltip: 'NAS',
+              icon: const Icon(Icons.storage_outlined),
+              onPressed: () => ShellNav.maybeOf(context)?.goTo('NAS'),
+            ),
           if (AppScope.of(context).can('plex'))
             IconButton(
               tooltip: 'Plex libraries',

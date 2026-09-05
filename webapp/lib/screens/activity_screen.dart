@@ -218,6 +218,11 @@ class EventCard extends StatelessWidget {
         'Started automatically after a download.',
       ),
       'plex_scan_failed' => ('⚠️', 'Auto Plex scan failed', e.error),
+      'nas_alert' => (
+        e.raw['cleared'] == true ? '✅' : '🚨',
+        'NAS ${e.raw['agent'] ?? ''}'.trim(),
+        stringList(e.raw['messages']).map((m) => '• $m').join('\n'),
+      ),
       _ => ('ℹ️', e.type, ''),
     };
     return Card(

@@ -60,7 +60,7 @@ from qbit_bot.utils import (
 )
 from qbit_bot.views import RES_CHOICES, default_label
 
-from . import covers
+from . import agents, covers
 
 log = logging.getLogger("qbit-web")
 
@@ -105,6 +105,7 @@ def user_pages() -> dict:
 # which endpoint prefixes a page unlocks for a user login; anything not listed
 # here (settings, cookie, cache) is admin-only
 _PAGE_PATHS = {
+    "nas": ("/api/nas",),
     "browse": ("/api/browse",),
     "search": ("/api/search", "/api/group"),
     "add": ("/api/add", "/api/tags", "/api/categories", "/api/defaults"),
@@ -935,6 +936,39 @@ async def cookie_update(body: CookieBody):
         raise HTTPException(400, "HeBits doesn't recognize that session — copy the whole Cookie header while logged in")
     save_hebits_cookie(cookie)
     return {"configured": True, "valid": True, "user": user}
+
+
+# ------------------------------------------------------------------ agents
+
+class AgentReport(BaseModel):
+    report: dict
+
+
+@public.post("/agents/{name}/report")
+async def agent_report(name: str, body: AgentReport, request: Request):
+    """Intake for external agents (agent/qnap_agent.py). Authenticated by the
+    shared AGENT_TOKEN header, not by a web login."""
+    if not config.AGENT_TOKEN:
+        raise HTTPException(503, "Agents are disabled — set AGENT_TOKEN in .env")
+    supplied = request.headers.get("x-agent-token", "")
+    if not supplied or not hmac.compare_digest(supplied, config.AGENT_TOKEN):
+        raise HTTPException(401, "Bad agent token")
+    name = name.strip().lower()
+    if not name or not name.replace("-", "").replace("_", "").isalnum():
+        raise HTTPException(400, "Agent name must be alphanumeric")
+    return await agents.ingest(name, body.report)
+
+
+@router.get("/nas")
+async def nas():
+    return {
+        "agents": agents.agents_view(),
+        "configured": bool(config.AGENT_TOKEN),
+        "thresholds": {
+            "usage_percent": config.NAS_USAGE_ALERT_PERCENT,
+            "disk_temp_c": config.NAS_DISK_TEMP_ALERT_C,
+        },
+    }
 
 
 # ------------------------------------------------------------------ errors

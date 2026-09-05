@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- launchd job for the QNAP agent on macOS: copy to ~/Library/LaunchAgents/,
+     fix the two paths, then:  launchctl load ~/Library/LaunchAgents/com.qbit.qnap-agent.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.qbit.qnap-agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/YOU/qnap-agent/.venv/bin/python</string>
+    <string>/Users/YOU/qnap-agent/qnap_agent.py</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/qnap-agent.log</string>
+  <key>StandardErrorPath</key><string>/tmp/qnap-agent.log</string>
+</dict>
+</plist>

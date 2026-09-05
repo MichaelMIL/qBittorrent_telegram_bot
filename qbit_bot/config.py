@@ -8,7 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
+DATA_DIR = Path(os.environ.get("DATA_DIR") or BASE_DIR / "data")  # override for tests
 
 load_dotenv(BASE_DIR / ".env")
 
@@ -50,6 +50,12 @@ SETTINGS_PASSWORD = os.environ.get("SETTINGS_PASSWORD", "").strip()
 CACHE_CLEAR_HOURS = float(os.environ.get("CACHE_CLEAR_HOURS", "168") or 0)
 CACHE_MAX_MB = float(os.environ.get("CACHE_MAX_MB", "1024") or 0)
 CACHE_MAX_WIDTH = int(os.environ.get("CACHE_MAX_WIDTH", "500"))  # px, posters
+# external agents (agent/qnap_agent.py on the Plex Mac) post reports with this
+# shared secret in an X-Agent-Token header; empty = agents disabled
+AGENT_TOKEN = os.environ.get("AGENT_TOKEN", "").strip()
+AGENT_STALE_MINUTES = int(os.environ.get("AGENT_STALE_MINUTES", "15"))
+NAS_USAGE_ALERT_PERCENT = int(os.environ.get("NAS_USAGE_ALERT_PERCENT", "90"))
+NAS_DISK_TEMP_ALERT_C = int(os.environ.get("NAS_DISK_TEMP_ALERT_C", "55"))
 CACHE_JPEG_QUALITY = int(os.environ.get("CACHE_JPEG_QUALITY", "82"))
 WEB_BUILD_DIR = BASE_DIR / "webapp" / "build" / "web"
 
@@ -72,9 +78,10 @@ DEFAULT_SETTINGS = {
         "favorites": False,
         "activity": False,
         "plex": False,
+        "nas": False,
     },
 }
-USER_PAGE_KEYS = ("browse", "search", "add", "library", "favorites", "activity", "plex")
+USER_PAGE_KEYS = ("browse", "search", "add", "library", "favorites", "activity", "plex", "nas")
 INTERVAL_CHOICES = (1, 2, 3, 6, 12, 24)
 WATCH_POLL_CHOICES = (15, 30, 60, 120)
 STALL_ALERT_CHOICES = (0, 3, 6, 12, 24)
@@ -94,6 +101,7 @@ WATCH_PATH = str(DATA_DIR / "watch.json")
 SERIES_DEFAULTS_PATH = str(DATA_DIR / "series_defaults.json")
 NOTIFIED_PATH = str(DATA_DIR / "notified.json")
 EVENTS_PATH = str(DATA_DIR / "events.json")
+AGENTS_PATH = str(DATA_DIR / "agents.json")
 COVERS_DIR = Path(os.environ.get("COVERS_DIR") or DATA_DIR / "covers")
 
 logging.basicConfig(
